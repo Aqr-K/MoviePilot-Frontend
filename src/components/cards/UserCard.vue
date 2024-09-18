@@ -20,7 +20,7 @@ const props = defineProps({
 const currentUser = store.state.auth.userName
 
 // 定义触发的自定义事件
-const emit = defineEmits(['remove'])
+const emit = defineEmits(['remove', 'save'])
 
 // 确认框
 const createConfirm = useConfirm()
@@ -101,7 +101,7 @@ onMounted(() => {
   <VCard>
     <VCardText class="text-center pt-10 pb-3">
       <VAvatar variant="flat" size="100" rounded>
-        <VImg :src="user.avatar ?? avatar1" alt="avatar" />
+        <VImg :src="user.avatar || avatar1" alt="avatar" />
       </VAvatar>
       <h5 class="text-h5 mt-3">{{ user.name }}</h5>
       <VChip size="small" class="mt-3" :class="{ 'text-error': user.is_superuser }">
