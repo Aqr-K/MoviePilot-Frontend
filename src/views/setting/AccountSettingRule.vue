@@ -93,6 +93,7 @@ function addFilterRuleGroup() {
     name: `规则组${filterRuleGroups.value.length + 1}`,
     rule_string: '',
     media_type: '',
+    category: '',
   })
 }
 
@@ -181,7 +182,8 @@ onMounted(() => {
                 :rule="element"
                 :rules="customRules"
                 @close="removeCustomRule(element)"
-                @change="onRuleChange" />
+                @change="onRuleChange"
+              />
             </template>
           </draggable>
         </VCardText>

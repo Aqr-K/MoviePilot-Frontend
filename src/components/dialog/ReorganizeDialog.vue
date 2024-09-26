@@ -3,6 +3,7 @@ import { useToast } from 'vue-toast-notification'
 import MediaIdSelector from '../misc/MediaIdSelector.vue'
 import store from '@/store'
 import api from '@/api'
+import { storageOptions } from '@/api/constants'
 import { numberValidator } from '@/@validators'
 import { useDisplay } from 'vuetify'
 import ProgressDialog from './ProgressDialog.vue'
@@ -13,13 +14,10 @@ const display = useDisplay()
 
 // 输入参数
 const props = defineProps({
-  storage: {
-    type: String,
-    default: () => 'local',
-  },
   logids: Array<number>,
   items: Array<FileItem>,
-  target: String,
+  target_storage: String,
+  target_path: String,
 })
 
 // 从 provide 中获取全局设置
@@ -70,13 +68,10 @@ const dialogTitle = computed(() => {
 
 // 表单
 const transferForm = reactive({
-  storage: props.storage,
+  fileitem: {},
   logid: 0,
-  path: '',
-  drive_id: '',
-  fileid: '',
-  filetype: '',
-  target: props.target ?? null,
+  target_storage: props.target_storage ?? 'local',
+  target_path: props.target_path ?? null,
   tmdbid: null,
   doubanid: null,
   season: null,
@@ -88,23 +83,35 @@ const transferForm = reactive({
   episode_offset: null,
   min_filesize: 0,
   scrape: false,
+  from_history: false,
 })
 
 // 所有媒体库目录
-const libraryDirectories = ref<TransferDirectoryConf[]>([])
+const directories = ref<TransferDirectoryConf[]>([])
+
+// 查询目录
+async function loadDirectories() {
+  try {
+    const result: { [key: string]: any } = await api.get('system/setting/Directories')
+    directories.value = result.data?.value ?? []
+  } catch (error) {
+    console.log(error)
+  }
+}
 
 // 目的目录下拉框
 const targetDirectories = computed(() => {
-  const directories = libraryDirectories.value.map(item => item.library_path)
-  return [...new Set(directories)]
+  const libraryDirectories = directories.value.map(item => item.library_path)
+  return [...new Set(libraryDirectories)]
 })
 
-// 监听目的路径变化，自动查询目录的刮削配置
+// 监听目的路径变化，自动查询目录削配置
 watch(transferForm, async () => {
-  if (transferForm.target) {
-    const directory = libraryDirectories.value.find(item => item.library_path === transferForm.target)
+  if (transferForm.target_path) {
+    const directory = directories.value.find(item => item.library_path === transferForm.target_path)
     if (directory) {
       transferForm.scrape = directory.scraping ?? false
+      transferForm.transfer_type = directory.transfer_type ?? ''
     }
   }
 })
@@ -165,13 +172,10 @@ async function transfer() {
 
 // 整理文件
 async function handleTransfer(item: FileItem) {
-  transferForm.path = item.path
-  transferForm.fileid = item.fileid || ''
-  transferForm.drive_id = item.drive_id || ''
-  transferForm.filetype = item.type || 'dir'
-
+  transferForm.fileitem = item
+  transferForm.logid = 0
   try {
-    const result: { [key: string]: any } = await api.post('transfer/manual', {}, { params: transferForm })
+    const result: { [key: string]: any } = await api.post('transfer/manual', transferForm)
     if (!result.success) $toast.error(`文件 ${item.path} 整理失败：${result.message}！`)
   } catch (e) {
     console.log(e)
@@ -181,28 +185,17 @@ async function handleTransfer(item: FileItem) {
 // 整理日志
 async function handleTransferLog(logid: number) {
   transferForm.logid = logid
+  transferForm.fileitem = {}
   try {
-    const result: { [key: string]: any } = await api.post('transfer/manual', {}, { params: transferForm })
+    const result: { [key: string]: any } = await api.post('transfer/manual', transferForm)
     if (!result.success) $toast.error(`历史记录 ${logid} 重新整理失败：${result.message}！`)
   } catch (e) {
     console.log(e)
   }
 }
 
-// 查询媒体库目录
-async function loadLibraryDirectories() {
-  try {
-    const result: { [key: string]: any } = await api.get('system/setting/LibraryDirectories')
-    if (result.success && result.data?.value) {
-      libraryDirectories.value = result.data.value
-    }
-  } catch (error) {
-    console.log(error)
-  }
-}
-
 onMounted(() => {
-  loadLibraryDirectories()
+  loadDirectories()
 })
 </script>
 
@@ -214,17 +207,17 @@ onMounted(() => {
       <VCardText>
         <VForm @submit.prevent="() => {}">
           <VRow>
-            <VCol v-if="props.storage == 'local'" cols="12" md="8">
-              <VCombobox
-                v-model="transferForm.target"
-                :items="targetDirectories"
-                label="目的路径"
+            <VCol cols="12" md="6">
+              <VSelect
+                v-model="transferForm.target_storage"
+                :items="storageOptions"
+                label="目的存储"
                 placeholder="留空自动"
-                hint="整理目的路径，留空将自动匹配"
+                hint="整理目的存储"
                 persistent-hint
               />
             </VCol>
-            <VCol v-if="props.storage == 'local'" cols="12" md="4">
+            <VCol cols="12" md="6">
               <VSelect
                 v-model="transferForm.transfer_type"
                 label="整理方式"
@@ -234,10 +227,18 @@ onMounted(() => {
                   { title: '复制', value: 'copy' },
                   { title: '硬链接', value: 'link' },
                   { title: '软链接', value: 'softlink' },
-                  { title: 'Rclone复制', value: 'rclone_copy' },
-                  { title: 'Rclone移动', value: 'rclone_move' },
                 ]"
                 hint="文件操作整理方式"
+                persistent-hint
+              />
+            </VCol>
+            <VCol cols="12" md="12">
+              <VCombobox
+                v-model="transferForm.target_path"
+                :items="targetDirectories"
+                label="目的路径"
+                placeholder="留空自动"
+                hint="整理目的路径，留空将自动匹配"
                 persistent-hint
               />
             </VCol>
@@ -347,6 +348,14 @@ onMounted(() => {
                 v-model="transferForm.scrape"
                 label="刮削元数据"
                 hint="整理完成后自动刮削元数据"
+                persistent-hint
+              />
+            </VCol>
+            <VCol cols="12" md="6" v-if="props.logids">
+              <VSwitch
+                v-model="transferForm.from_history"
+                label="复用历史识别信息"
+                hint="使用历史记录中已识别的媒体信息"
                 persistent-hint
               />
             </VCol>

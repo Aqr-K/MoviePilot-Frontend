@@ -8,6 +8,7 @@ import ProgressDialog from '@/components/dialog/ProgressDialog.vue'
 import { useRoute } from 'vue-router'
 import router from '@/router'
 import { useDisplay } from 'vuetify'
+import { storageDict } from '@/api/constants'
 
 // 显示器宽度
 const display = useDisplay()
@@ -413,11 +414,22 @@ onMounted(fetchData)
         </div>
       </template>
       <template #item.src="{ item }">
-        <small>{{ item?.src }} <br />=> {{ item?.dest }}</small>
+        <div>
+          <span>
+            <VChip variant="tonal" size="small" label class="my-1"> {{ storageDict[item?.src_storage || ''] }}</VChip>
+            <small>{{ item?.src }}</small>
+          </span>
+          <span class="text-high-emphasis text-bold"> => </span>
+          <br />
+          <span v-if="item?.dest">
+            <VChip variant="tonal" size="small" label class="my-1"> {{ storageDict[item?.dest_storage || ''] }}</VChip>
+            <small>{{ item?.dest }}</small>
+          </span>
+        </div>
       </template>
       <template #item.mode="{ item }">
         <VChip variant="outlined" color="primary" size="small">
-          {{ TransferDict[item?.mode || ''] }}
+          {{ TransferDict[item?.mode ?? ''] || '未知' }}
         </VChip>
       </template>
       <template #item.status="{ item }">

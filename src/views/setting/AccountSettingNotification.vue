@@ -145,7 +145,10 @@ onMounted(() => {
             :component-data="{ 'class': 'grid gap-3 grid-app-card' }"
           >
             <template #item="{ element }">
-              <NotificationChannelCard :notification="element" @close="removeNotification(element)" />
+              <NotificationChannelCard
+                :notification="element"
+                @close="removeNotification(element)"
+              />
             </template>
           </draggable>
         </VCardText>
