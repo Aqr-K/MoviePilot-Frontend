@@ -34,12 +34,22 @@ const SystemSettings = ref<any>({
   // 高级系统设置
   Advanced: {
     // 全局
+    AUTO_UPDATE_RESOURCE: true,
+    MOVIEPILOT_AUTO_UPDATE: 'release',
     AUXILIARY_AUTH_ENABLE: false,
     GLOBAL_IMAGE_CACHE: false,
     SUBSCRIBE_STATISTIC_SHARE: true,
     PLUGIN_STATISTIC_SHARE: true,
     BIG_MEMORY_MODE: false,
     DB_WAL_ENABLE: false,
+    // 系统
+    AUTO_UPDATE_RESOURCE: true,
+    MOVIEPILOT_AUTO_UPDATE: 'release',
+    NGINX_PORT='3000',
+    PORT='3001',
+    NGINX_CLIENT_MAX_BODY_SIZE="10m",
+    ENABLE_SSL=false,
+    SSL_DOMAIN=null,
     // 媒体
     TMDB_API_DOMAIN: null,
     TMDB_IMAGE_DOMAIN: null,
@@ -62,6 +72,7 @@ const SystemSettings = ref<any>({
     LOG_MAX_FILE_SIZE: '5',
     LOG_BACKUP_COUNT: '3',
     LOG_FILE_FORMAT: '【%(levelname)s】%(asctime)s - %(message)s',
+    LOG_CONSOLE_FORMAT: '"%(leveltext)s[%(name)s] %(asctime)s %(message)s"'
     // 实验室
     PLUGIN_AUTO_RELOAD: false,
     ENCODING_DETECTION_PERFORMANCE_MODE: true,
@@ -91,18 +102,25 @@ const activeTab = ref('system')
 
 // 元数据语言
 const tmdbLanguageItems = [
-  { title: t('setting.system.tmdbLanguage.zhCN'), value: 'zh' },
-  { title: t('setting.system.tmdbLanguage.zhTW'), value: 'zh-TW' },
-  { title: t('setting.system.tmdbLanguage.en'), value: 'en' },
+  { title: t('setting.system.advancedSettings.media.tmdbLocale.items.zhCN'), value: 'zh' },
+  { title: t('setting.system.advancedSettings.media.tmdbLocale.items.zhTW'), value: 'zh-TW' },
+  { title: t('setting.system.advancedSettings.media.tmdbLocale.items.en'), value: 'en' },
 ]
 
 // 日志等级
 const logLevelItems = [
-  { title: t('setting.system.logLevelItems.debug'), value: 'DEBUG' },
-  { title: t('setting.system.logLevelItems.info'), value: 'INFO' },
-  { title: t('setting.system.logLevelItems.warning'), value: 'WARNING' },
-  { title: t('setting.system.logLevelItems.error'), value: 'ERROR' },
-  { title: t('setting.system.logLevelItems.critical'), value: 'CRITICAL' },
+  { title: t('setting.system.advancedSettings.log.logLevel.items.debug'), value: 'DEBUG' },
+  { title: t('setting.system.advancedSettings.log.logLevel.items.info'), value: 'INFO' },
+  { title: t('setting.system.advancedSettings.log.logLevel.items.warning'), value: 'WARNING' },
+  { title: t('setting.system.advancedSettings.log.logLevel.items.error'), value: 'ERROR' },
+  { title: t('setting.system.advancedSettings.log.logLevel.items.critical'), value: 'CRITICAL' },
+]
+
+// 重启更新模式
+const MOVIEPILOT_UPDATE = [
+  { title: "release 模式", value: 'release' },
+  { title: "DEV 模式", value: 'dev' },
+  { title: "不更新", value: 'false' },
 ]
 
 // 安全域名添加变量
@@ -135,7 +153,7 @@ async function reloadSystem() {
   try {
     const result: { [key: string]: any } = await api.get('system/reload')
     if (result.success) $toast.success(t('setting.system.reloadSuccess'))
-    else $toast.error(t('setting.system.reloadFailed'))
+    else $toast.error(t('setting.system.task.reloadFailed'))
   } catch (error) {
     console.log(error)
   }
@@ -152,8 +170,8 @@ async function saveDownloaderSetting() {
       downloaders.value = handleDefaultDownloaders(enabledDownloaders, downloaders.value)
     }
     const result: { [key: string]: any } = await api.post('system/setting/Downloaders', downloaders.value)
-    if (result.success) $toast.success(t('setting.system.downloaderSaveSuccess'))
-    else $toast.error(t('setting.system.downloaderSaveFailed'))
+    if (result.success) $toast.success(t('setting.system.downloader.task.saveSuccess'))
+    else $toast.error(t('setting.system.downloader.task.saveFailed'))
 
     await loadDownloaderSetting()
     await reloadSystem()
@@ -168,7 +186,7 @@ function handleDefaultDownloaders(enabledDownloaders: any[], downloaders: any[])
   if (enabledDownloaders.length > 0 && !enabledDefaultDownloader) {
     downloaders = downloaders.map(item => {
       if (item === enabledDownloaders[0]) {
-        $toast.info(t('setting.system.defaultDownloaderNotice', { name: item.name }))
+        $toast.info(t('setting.system.downloader.task.noDefaultNotice', { name: item.name }))
         return { ...item, default: true }
       }
       // 清除其他下载器的默认下载器状态
@@ -192,8 +210,8 @@ async function loadMediaServerSetting() {
 async function saveMediaServerSetting() {
   try {
     const result: { [key: string]: any } = await api.post('system/setting/MediaServers', mediaServers.value)
-    if (result.success) $toast.success(t('setting.system.mediaServerSaveSuccess'))
-    else $toast.error(t('setting.system.mediaServerSaveFailed'))
+    if (result.success) $toast.success(t('setting.system.mediaServers.task.saveSuccess'))
+    else $toast.error(t('setting.system.mediaServers.saveFailed'))
 
     await loadMediaServerSetting()
     await reloadSystem()
@@ -226,7 +244,7 @@ async function saveSystemSetting(value: { [key: string]: any }) {
     if (result.success) {
       return true
     } else {
-      $toast.error(t('setting.system.saveFailed', { message: result?.message }))
+      $toast.error(t('setting.system.task.saveFailed', { message: result?.message }))
       return false
     }
   } catch (error) {
@@ -268,21 +286,21 @@ async function copyValue(value: string) {
   try {
     let success
     success = copyToClipboard(value)
-    if (await success) $toast.success(t('setting.system.copySuccess'))
-    else $toast.error(t('setting.system.copyFailed'))
+    if (await success) $toast.success(t('setting.system.task.copySuccess'))
+    else $toast.error(t('setting.system.task.copyFailed'))
   } catch (error) {
-    $toast.error(t('setting.system.copyError'))
+    $toast.error(t('setting.system.task.copyError'))
     console.log(error)
   }
 }
 
 // 登录首页壁纸来源
 const wallpaperItems = [
-  { title: t('setting.system.wallpaperItems.tmdb'), value: 'tmdb' },
-  { title: t('setting.system.wallpaperItems.bing'), value: 'bing' },
-  { title: t('setting.system.wallpaperItems.mediaserver'), value: 'mediaserver' },
-  { title: t('setting.system.wallpaperItems.customize'), value: 'customize' },
-  { title: t('setting.system.wallpaperItems.none'), value: '' },
+  { title: t('setting.system.basicSettings.wallpaper.items.tmdb'), value: 'tmdb' },
+  { title: t('setting.system.basicSettings.wallpaper.items.bing'), value: 'bing' },
+  { title: t('setting.system.basicSettings.wallpaper.items.mediaserver'), value: 'mediaserver' },
+  { title: t('setting.system.basicSettings.wallpaper.items.customize'), value: 'customize' },
+  { title: t('setting.system.basicSettings.wallpaper.items.none'), value: '' },
 ]
 
 // 预设部分Github加速站
@@ -405,7 +423,7 @@ onDeactivated(() => {
   <ProgressDialog
     v-if="progressDialog"
     v-model="progressDialog"
-    :text="t('setting.system.reloading')"
+    :text="t('setting.system.task.reloading')"
     :indeterminate="true"
   />
 
@@ -413,8 +431,10 @@ onDeactivated(() => {
     <VCol cols="12">
       <VCard>
         <VCardItem>
-          <VCardTitle>{{ t('setting.system.basicSettings') }}</VCardTitle>
-          <VCardSubtitle>{{ t('setting.system.basicSettingsDesc') }}</VCardSubtitle>
+          <VCardTitle>{{ t("setting.system.basicSettings.title") }}</VCardTitle>
+          <VCardSubtitle>{{
+            t("setting.system.basicSettings.subtitle")
+          }}</VCardSubtitle>
         </VCardItem>
         <VCardText>
           <VForm @submit.prevent="() => {}">
@@ -422,33 +442,60 @@ onDeactivated(() => {
               <VCol cols="12" md="6">
                 <VTextField
                   v-model="SystemSettings.Basic.APP_DOMAIN"
-                  :label="t('setting.system.appDomain')"
-                  :hint="t('setting.system.appDomainHint')"
-                  placeholder="http://localhost:3000"
+                  :label="t('setting.system.basicSettings.appDomain.label')"
+                  :hint="t('setting.system.basicSettings.appDomain.hint')"
+                  :placeholder="
+                    t('setting.system.basicSettings.appDomain.placeholder')
+                  "
                   persistent-hint
                 />
               </VCol>
 
               <VCol cols="12" md="6">
                 <VRow>
-                  <VCol cols="12" :md="SystemSettings.Basic.WALLPAPER === 'customize' ? 6 : 12">
+                  <VCol
+                    cols="12"
+                    :md="
+                      SystemSettings.Basic.WALLPAPER === 'customize' ? 6 : 12
+                    "
+                  >
                     <VSelect
                       v-model="SystemSettings.Basic.WALLPAPER"
-                      :label="t('setting.system.wallpaper')"
-                      :hint="t('setting.system.wallpaperHint')"
+                      :label="t('setting.system.basicSettings.wallpaper.label')"
+                      :hint="t('setting.system.basicSettings.wallpaper.hint')"
                       persistent-hint
                       :items="wallpaperItems"
                     />
                   </VCol>
 
-                  <VCol v-if="SystemSettings.Basic.WALLPAPER === 'customize'" cols="12" md="6">
+                  <VCol
+                    v-if="SystemSettings.Basic.WALLPAPER === 'customize'"
+                    cols="12"
+                    md="6"
+                  >
                     <VTextField
                       v-model="SystemSettings.Basic.CUSTOMIZE_WALLPAPER_API_URL"
-                      :label="t('setting.system.customizeWallpaperApi')"
-                      :hint="t('setting.system.customizeWallpaperApiHint')"
-                      :placeholder="t('setting.system.customizeWallpaperApi')"
+                      :label="
+                        t(
+                          'setting.system.basicSettings.customizeWallpaperApi.label'
+                        )
+                      "
+                      :hint="
+                        t(
+                          'setting.system.basicSettings.customizeWallpaperApi.hint'
+                        )
+                      "
+                      :placeholder="
+                        t('setting.system.basicSettings.customizeWallpaperApi')
+                      "
                       persistent-hint
-                      :rules="[v => !!v || t('setting.system.customizeWallpaperApiRequired')]"
+                      :rules="[
+                        (v) =>
+                          !!v ||
+                          t(
+                            'setting.system.basicSettings.customizeWallpaperApi.rules.required'
+                          ),
+                      ]"
                     />
                   </VCol>
                 </VRow>
@@ -456,45 +503,73 @@ onDeactivated(() => {
               <VCol cols="12" md="6">
                 <VSelect
                   v-model="SystemSettings.Basic.RECOGNIZE_SOURCE"
-                  :label="t('setting.system.recognizeSource')"
-                  :hint="t('setting.system.recognizeSourceHint')"
+                  :label="
+                    t('setting.system.basicSettings.recognizeSource.label')
+                  "
+                  :hint="t('setting.system.basicSettings.recognizeSource.hint')"
                   persistent-hint
                   :items="[
-                    { title: 'TheMovieDb', value: 'themoviedb' },
-                    { title: '豆瓣', value: 'douban' },
+                    {
+                      title: t(
+                        'setting.system.basicSettings.recognizeSource.items.tmdb.title'
+                      ),
+                      value: 'themoviedb',
+                    },
+                    {
+                      title: t(
+                        'setting.system.basicSettings.recognizeSource.items.douban.title'
+                      ),
+                      value: 'douban',
+                    },
                   ]"
                 />
               </VCol>
               <VCol cols="12" md="6">
                 <VTextField
                   v-model="SystemSettings.Basic.MEDIASERVER_SYNC_INTERVAL"
-                  :label="t('setting.system.mediaServerSyncInterval')"
-                  :hint="t('setting.system.mediaServerSyncIntervalHint')"
+                  :label="
+                    t(
+                      'setting.system.basicSettings.mediaServerSyncInterval.labl'
+                    )
+                  "
+                  :hint="
+                    t(
+                      'setting.system.basicSettings.mediaServerSyncInterval.hint'
+                    )
+                  "
                   persistent-hint
-                  :suffix="t('setting.system.hours')"
+                  :suffix="
+                    t(
+                      'setting.system.basicSettings.mediaServerSyncInterval.unit'
+                    )
+                  "
                   type="number"
                   min="1"
                   :rules="[
-                    (v: any) => !!v || t('setting.system.required'),
-                    (v: any) => !isNaN(v) || t('setting.system.numbersOnly'),
-                    (v: any) => v >= 1 || t('setting.system.minInterval'),
+                    (v: any) => !!v || t('setting.system.basicSettings.mediaServerSyncInterval.rules.required'),
+                    (v: any) => !isNaN(v) || t('setting.system.basicSettings.mediaServerSyncInterval.rules.numbersOnly'),
+                    (v: any) => v >= 1 || t('setting.system.basicSettings.mediaServerSyncInterval.rules.min'),
                   ]"
                 />
               </VCol>
               <VCol cols="12" md="6">
                 <VTextField
                   v-model="SystemSettings.Basic.API_TOKEN"
-                  :label="t('setting.system.apiToken')"
-                  :hint="t('setting.system.apiTokenHint')"
-                  :placeholder="t('setting.system.apiTokenMinChars')"
+                  :label="t('setting.system.basicSettings.apiToken.label')"
+                  :hint="t('setting.system.basicSettings.apiToken.hint')"
+                  :placeholder="
+                    t('setting.system.basicSettings.apiToken.placeholder')
+                  "
                   persistent-hint
                   prependInnerIcon="mdi-reload"
-                  :appendInnerIcon="SystemSettings.Basic.API_TOKEN ? 'mdi-content-copy' : ''"
+                  :appendInnerIcon="
+                    SystemSettings.Basic.API_TOKEN ? 'mdi-content-copy' : ''
+                  "
                   @click:prependInner="createRandomString"
                   @click:appendInner="copyValue(SystemSettings.Basic.API_TOKEN)"
                   :rules="[
-                    (v: string) => !!v || t('setting.system.apiTokenRequired'),
-                    (v: string) => v.length >= 16 || t('setting.system.apiTokenLength'),
+                    (v: string) => !!v || t('setting.system.basicSettings.apiToken.rules.required'),
+                    (v: string) => v.length >= 16 || t('setting.system.basicSettings.apiToken.rules.min'),
                   ]"
                 />
               </VCol>
@@ -503,7 +578,7 @@ onDeactivated(() => {
                   v-model="SystemSettings.Basic.GITHUB_TOKEN"
                   :label="t('setting.system.githubToken')"
                   :placeholder="t('setting.system.githubTokenFormat')"
-                  :hint="t('setting.system.githubTokenHint')"
+                  :hint="t('setting.system.githubToken.hint')"
                   persistent-hint
                 >
                 </VTextField>
@@ -511,9 +586,11 @@ onDeactivated(() => {
               <VCol cols="12" md="6">
                 <VTextField
                   v-model="SystemSettings.Basic.OCR_HOST"
-                  :label="t('setting.system.ocrHost')"
-                  placeholder="https://movie-pilot.org"
-                  :hint="t('setting.system.ocrHostHint')"
+                  :label="t('setting.system.basicSettings.ocrHost.label')"
+                  :placeholder="
+                    t('setting.system.basicSettings.ocrHost.placeholder')
+                  "
+                  :hint="t('setting.system.basicSettings.ocrHost.hint')"
                   persistent-hint
                 />
               </VCol>
@@ -523,7 +600,9 @@ onDeactivated(() => {
         <VCardText>
           <VForm @submit.prevent="() => {}">
             <div class="d-flex flex-wrap gap-4 mt-4">
-              <VBtn type="submit" @click="saveBasicSettings"> {{ t('common.save') }} </VBtn>
+              <VBtn type="submit" @click="saveBasicSettings">
+                {{ t("common.save") }}
+              </VBtn>
               <VSpacer />
               <VBtn
                 color="error"
@@ -531,7 +610,7 @@ onDeactivated(() => {
                 prepend-icon="mdi-cog"
                 append-icon="mdi-dots-horizontal"
               >
-                {{ t('setting.system.advancedSettings') }}
+                {{ t("setting.system.advancedSettings") }}
               </VBtn>
             </div>
           </VForm>
@@ -543,8 +622,10 @@ onDeactivated(() => {
     <VCol cols="12">
       <VCard>
         <VCardItem>
-          <VCardTitle>{{ t('setting.system.downloaders') }}</VCardTitle>
-          <VCardSubtitle>{{ t('setting.system.downloadersDesc') }}</VCardSubtitle>
+          <VCardTitle>{{ t("setting.system.downloaders") }}</VCardTitle>
+          <VCardSubtitle>{{
+            t("setting.system.downloadersDesc")
+          }}</VCardSubtitle>
         </VCardItem>
         <VCardText>
           <draggable
@@ -552,7 +633,7 @@ onDeactivated(() => {
             handle=".cursor-move"
             item-key="name"
             tag="div"
-            :component-data="{ 'class': 'grid gap-3 grid-app-card' }"
+            :component-data="{ class: 'grid gap-3 grid-app-card' }"
           >
             <template #item="{ element }">
               <DownloaderCard
@@ -568,16 +649,23 @@ onDeactivated(() => {
         <VCardText>
           <VForm @submit.prevent="() => {}">
             <div class="d-flex flex-wrap gap-4 mt-4">
-              <VBtn type="submit" @click="saveDownloaderSetting"> {{ t('common.save') }} </VBtn>
+              <VBtn type="submit" @click="saveDownloaderSetting">
+                {{ t("common.save") }}
+              </VBtn>
               <VBtn color="success" variant="tonal">
                 <VIcon icon="mdi-plus" />
                 <VMenu activator="parent" close-on-content-click>
                   <VList>
-                    <VListItem v-for="item in downloaderOptions" @click="addDownloader(item.value)">
+                    <VListItem
+                      v-for="item in downloaderOptions"
+                      @click="addDownloader(item.value)"
+                    >
                       <VListItemTitle>{{ item.title }}</VListItemTitle>
                     </VListItem>
                     <VListItem @click="addDownloader('custom')">
-                      <VListItemTitle>{{ t('setting.system.custom') }}</VListItemTitle>
+                      <VListItemTitle>{{
+                        t("setting.system.custom")
+                      }}</VListItemTitle>
                     </VListItem>
                   </VList>
                 </VMenu>
@@ -592,8 +680,10 @@ onDeactivated(() => {
     <VCol cols="12">
       <VCard>
         <VCardItem>
-          <VCardTitle>{{ t('setting.system.mediaServers') }}</VCardTitle>
-          <VCardSubtitle>{{ t('setting.system.mediaServersDesc') }}</VCardSubtitle>
+          <VCardTitle>{{ t("setting.system.mediaServers") }}</VCardTitle>
+          <VCardSubtitle>{{
+            t("setting.system.mediaServersDesc")
+          }}</VCardSubtitle>
         </VCardItem>
         <VCardText>
           <draggable
@@ -601,7 +691,7 @@ onDeactivated(() => {
             handle=".cursor-move"
             item-key="name"
             tag="div"
-            :component-data="{ 'class': 'grid gap-3 grid-app-card' }"
+            :component-data="{ class: 'grid gap-3 grid-app-card' }"
           >
             <template #item="{ element }">
               <MediaServerCard
@@ -616,16 +706,23 @@ onDeactivated(() => {
         <VCardText>
           <VForm @submit.prevent="() => {}">
             <div class="d-flex flex-wrap gap-4 mt-4">
-              <VBtn type="submit" @click="saveMediaServerSetting"> {{ t('common.save') }} </VBtn>
+              <VBtn type="submit" @click="saveMediaServerSetting">
+                {{ t("common.save") }}
+              </VBtn>
               <VBtn color="success" variant="tonal">
                 <VIcon icon="mdi-plus" />
                 <VMenu activator="parent" close-on-content-click>
                   <VList>
-                    <VListItem v-for="item in mediaServerOptions" @click="addMediaServer(item.value)">
+                    <VListItem
+                      v-for="item in mediaServerOptions"
+                      @click="addMediaServer(item.value)"
+                    >
                       <VListItemTitle>{{ item.title }}</VListItemTitle>
                     </VListItem>
                     <VListItem @click="addMediaServer('custom')">
-                      <VListItemTitle>{{ t('setting.system.custom') }}</VListItemTitle>
+                      <VListItemTitle>{{
+                        t("setting.system.custom")
+                      }}</VListItemTitle>
                     </VListItem>
                   </VList>
                 </VMenu>
@@ -648,76 +745,132 @@ onDeactivated(() => {
     <VCard>
       <VCardItem>
         <VDialogCloseBtn @click="advancedDialog = false" />
-        <VCardTitle>{{ t('setting.system.advancedSettings') }}</VCardTitle>
-        <VCardSubtitle>{{ t('setting.system.advancedSettingsDesc') }}</VCardSubtitle>
+        <VCardTitle>{{
+          t("setting.system.advancedSettings.title")
+        }}</VCardTitle>
+        <VCardSubtitle>{{
+          t("setting.system.advancedSetting.subtitle")
+        }}</VCardSubtitle>
       </VCardItem>
       <VCardText>
         <VTabs v-model="activeTab" show-arrows>
           <VTab value="system">
-            <div>{{ t('setting.system.system') }}</div>
+            <div>{{ t("setting.advancedSettings.tabs.system") }}</div>
           </VTab>
           <VTab value="media">
-            <div>{{ t('setting.system.media') }}</div>
+            <div>{{ t("setting.advancedSettings.tabs.media") }}</div>
           </VTab>
           <VTab value="network">
-            <div>{{ t('setting.system.network') }}</div>
+            <div>{{ t("setting.advancedSettings.tabs.network") }}</div>
           </VTab>
           <VTab value="log">
-            <div>{{ t('setting.system.log') }}</div>
+            <div>{{ t("setting.advancedSettings.tabs.log") }}</div>
           </VTab>
           <VTab value="dev">
-            <div>{{ t('setting.system.lab') }}</div>
+            <div>{{ t("setting.advancedSettings.tabs.lab") }}</div>
           </VTab>
         </VTabs>
-        <VWindow v-model="activeTab" class="mt-5 disable-tab-transition" :touch="false">
+        <VWindow
+          v-model="activeTab"
+          class="mt-5 disable-tab-transition"
+          :touch="false"
+        >
           <VWindowItem value="system">
             <div>
               <VRow>
                 <VCol cols="12" md="6">
                   <VSwitch
                     v-model="SystemSettings.Advanced.AUXILIARY_AUTH_ENABLE"
-                    :label="t('setting.system.auxAuthEnable')"
-                    :hint="t('setting.system.auxAuthEnableHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.system.auxAuthEnable.label'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.system.auxAuthEnable.hint'
+                      )
+                    "
                     persistent-hint
                   />
                 </VCol>
                 <VCol cols="12" md="6">
                   <VSwitch
                     v-model="SystemSettings.Advanced.GLOBAL_IMAGE_CACHE"
-                    :label="t('setting.system.globalImageCache')"
-                    :hint="t('setting.system.globalImageCacheHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.system.globalImageCache.label'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.system.globalImageCache.hint'
+                      )
+                    "
                     persistent-hint
                   />
                 </VCol>
                 <VCol cols="12" md="6">
                   <VSwitch
                     v-model="SystemSettings.Advanced.SUBSCRIBE_STATISTIC_SHARE"
-                    :label="t('setting.system.subscribeStatisticShare')"
-                    :hint="t('setting.system.subscribeStatisticShareHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.system.subscribeStatisticShare.label'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.system.subscribeStatisticShare.hint'
+                      )
+                    "
                     persistent-hint
                   />
                 </VCol>
                 <VCol cols="12" md="6">
                   <VSwitch
                     v-model="SystemSettings.Advanced.PLUGIN_STATISTIC_SHARE"
-                    :label="t('setting.system.pluginStatisticShare')"
-                    :hint="t('setting.system.pluginStatisticShareHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.system.pluginStatisticShare.label'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.system.pluginStatisticShare.hint'
+                      )
+                    "
                     persistent-hint
                   />
                 </VCol>
                 <VCol cols="12" md="6">
                   <VSwitch
                     v-model="SystemSettings.Advanced.BIG_MEMORY_MODE"
-                    :label="t('setting.system.bigMemoryMode')"
-                    :hint="t('setting.system.bigMemoryModeHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.system.bigMemoryMode.label'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.system.bigMemoryMode.hint'
+                      )
+                    "
                     persistent-hint
                   />
                 </VCol>
                 <VCol cols="12" md="6">
                   <VSwitch
                     v-model="SystemSettings.Advanced.DB_WAL_ENABLE"
-                    :label="t('setting.system.dbWalEnable')"
-                    :hint="t('setting.system.dbWalEnableHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.system.dbWalEnable.label'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.system.dbWalEnable.hint'
+                      )
+                    "
                     persistent-hint
                   />
                 </VCol>
@@ -730,31 +883,65 @@ onDeactivated(() => {
                 <VCol cols="12" md="6">
                   <VCombobox
                     v-model="SystemSettings.Advanced.TMDB_API_DOMAIN"
-                    :label="t('setting.system.tmdbApiDomain')"
-                    :placeholder="t('setting.system.tmdbApiDomainPlaceholder')"
-                    :hint="t('setting.system.tmdbApiDomainHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.media.tmdbApiDomain.label'
+                      )
+                    "
+                    :placeholder="
+                      t(
+                        'setting.system.advancedSettings.media.tmdbApiDomain.placeholder'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.media.tmdbApiDomain.hint'
+                      )
+                    "
                     persistent-hint
                     :items="['api.themoviedb.org', 'api.tmdb.org']"
-                    :rules="[(v: string) => !!v || t('setting.system.tmdbApiDomainRequired')]"
+                    :rules="[(v: string) => !!v || t('setting.system.advancedSettings.media.tmdbApiDomain.rules.required')]"
                   />
                 </VCol>
                 <VCol cols="12" md="6">
                   <VCombobox
                     v-model="SystemSettings.Advanced.TMDB_IMAGE_DOMAIN"
-                    :label="t('setting.system.tmdbImageDomain')"
-                    :placeholder="t('setting.system.tmdbImageDomainPlaceholder')"
-                    :hint="t('setting.system.tmdbImageDomainHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.media.tmdbImageDomain.label'
+                      )
+                    "
+                    :placeholder="
+                      t(
+                        'setting.system.advancedSettings.media.tmdbImageDomain.placeholder'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.media.tmdbImageDomain.hint'
+                      )
+                    "
                     persistent-hint
                     :items="['image.tmdb.org', 'static-mdb.v.geilijiasu.com']"
-                    :rules="[(v: string) => !!v || t('setting.system.tmdbImageDomainRequired')]"
+                    :rules="[(v: string) => !!v || t('setting.system.advancedSettings.media.tmdbImageDomain.rules.required')]"
                   />
                 </VCol>
                 <VCol cols="12" md="6">
                   <VSelect
                     v-model="SystemSettings.Advanced.TMDB_LOCALE"
-                    :label="t('setting.system.tmdbLocale')"
-                    :placeholder="t('setting.system.tmdbLocalePlaceholder')"
-                    :hint="t('setting.system.tmdbLocaleHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.media.tmdbLocale.label'
+                      )
+                    "
+                    :placeholder="
+                      t(
+                        'setting.system.advancedSettings.media.tmdbLocale.placeholder'
+                      )
+                    "
+                    :hint="
+                      t('setting.system.advancedSettings.media.tmdbLocale.hint')
+                    "
                     persistent-hint
                     :items="tmdbLanguageItems"
                   />
@@ -762,15 +949,27 @@ onDeactivated(() => {
                 <VCol cols="12" md="6">
                   <VTextField
                     v-model="SystemSettings.Advanced.META_CACHE_EXPIRE"
-                    :label="t('setting.system.metaCacheExpire')"
-                    :hint="t('setting.system.metaCacheExpireHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.media.metaCacheExpire.label'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.media.metaCacheExpire.hint'
+                      )
+                    "
                     persistent-hint
                     min="0"
                     type="number"
-                    :suffix="t('setting.system.hour')"
+                    :suffix="
+                      t(
+                        'setting.system.advancedSettings.media.metaCacheExpire.unit'
+                      )
+                    "
                     :rules="[
-                      (v: any) => v === 0 || !!v || t('setting.system.metaCacheExpireRequired'),
-                      (v: any) => v >= 0 || t('setting.system.metaCacheExpireMin'),
+                      (v: any) => v === 0 || !!v || t('setting.system.advancedSettings.media.metaCacheExpire.rules.required'),
+                      (v: any) => v >= 0 || t('setting.system.advancedSettings.media.metaCacheExpire.rules.min'),
                     ]"
                   />
                 </VCol>
@@ -779,24 +978,48 @@ onDeactivated(() => {
                 <VCol cols="12" md="6">
                   <VSwitch
                     v-model="SystemSettings.Advanced.SCRAP_FOLLOW_TMDB"
-                    :label="t('setting.system.scrapFollowTmdb')"
-                    :hint="t('setting.system.scrapFollowTmdbHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.media.scrapFollowTmdb.label'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.media.scrapFollowTmdb.hint'
+                      )
+                    "
                     persistent-hint
                   />
                 </VCol>
                 <VCol cols="12" md="6">
                   <VSwitch
                     v-model="SystemSettings.Advanced.TMDB_SCRAP_ORIGINAL_IMAGE"
-                    :label="t('setting.system.scrapOriginalImage')"
-                    :hint="t('setting.system.scrapOriginalImageHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.media.scrapOriginalImage.label'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.media.scrapOriginalImage.hint'
+                      )
+                    "
                     persistent-hint
                   />
                 </VCol>
                 <VCol cols="12" md="6">
                   <VSwitch
                     v-model="SystemSettings.Advanced.FANART_ENABLE"
-                    :label="t('setting.system.fanartEnable')"
-                    :hint="t('setting.system.fanartEnableHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.media.fanartEnable.label'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.media.fanartEnable.hint'
+                      )
+                    "
                     persistent-hint
                   />
                 </VCol>
@@ -809,9 +1032,21 @@ onDeactivated(() => {
                 <VCol cols="12" md="6">
                   <VCombobox
                     v-model="githubProxyDisplay"
-                    :label="t('setting.system.githubProxy')"
-                    :placeholder="t('setting.system.githubProxyPlaceholder')"
-                    :hint="t('setting.system.githubProxyHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.network.githubProxy.label'
+                      )
+                    "
+                    :placeholder="
+                      t(
+                        'setting.system.advancedSettings.network.githubProxy.placeholder'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.network.githubProxy.hint'
+                      )
+                    "
                     persistent-hint
                     :items="githubMirrorsItems"
                     clearable
@@ -820,9 +1055,19 @@ onDeactivated(() => {
                 <VCol cols="12" md="6">
                   <VCombobox
                     v-model="pipProxyDisplay"
-                    :label="t('setting.system.pipProxy')"
-                    :placeholder="t('setting.system.pipProxyPlaceholder')"
-                    :hint="t('setting.system.pipProxyHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.network.pipProxy.label'
+                      )
+                    "
+                    :placeholder="
+                      t(
+                        'setting.system.advancedSettings.network.pipProxy.placeholder'
+                      )
+                    "
+                    :hint="
+                      t('setting.system.advancedSettings.network.pipProxy.hint')
+                    "
                     persistent-hint
                     :items="pipMirrorsItems"
                     clearable
@@ -833,26 +1078,58 @@ onDeactivated(() => {
                 <VCol cols="12" md="6">
                   <VSwitch
                     v-model="SystemSettings.Advanced.DOH_ENABLE"
-                    :label="t('setting.system.dohEnable')"
-                    :hint="t('setting.system.dohEnableHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.network.dohEnable.label'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.network.dohEnable.hint'
+                      )
+                    "
                     persistent-hint
                   />
                 </VCol>
                 <VCol cols="12" v-show="SystemSettings.Advanced.DOH_ENABLE">
                   <VTextarea
                     v-model="SystemSettings.Advanced.DOH_RESOLVERS"
-                    :label="t('setting.system.dohResolvers')"
-                    :placeholder="t('setting.system.dohResolversPlaceholder')"
-                    :hint="t('setting.system.dohResolversHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.network.dohResolvers.label'
+                      )
+                    "
+                    :placeholder="
+                      t(
+                        'setting.system.advancedSettings.network.dohResolvers.placeholder'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.network.dohResolvers.hint'
+                      )
+                    "
                     persistent-hint
                   />
                 </VCol>
                 <VCol cols="12" v-show="SystemSettings.Advanced.DOH_ENABLE">
                   <VTextarea
                     v-model="SystemSettings.Advanced.DOH_DOMAINS"
-                    :label="t('setting.system.dohDomains')"
-                    :placeholder="t('setting.system.dohDomainsPlaceholder')"
-                    :hint="t('setting.system.dohDomainsHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.network.dohDomains.label'
+                      )
+                    "
+                    :placeholder="
+                      t(
+                        'setting.system.advancedSettings.network.dohDomains.placeholder'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.network.dohDomains.hint'
+                      )
+                    "
                     persistent-hint
                   />
                 </VCol>
@@ -862,32 +1139,65 @@ onDeactivated(() => {
                   <!-- 安全域名 -->
                   <VCard>
                     <VCardItem>
-                      <VCardTitle>{{ t('setting.system.securityImageDomains') }}</VCardTitle>
-                      <VCardSubtitle>{{ t('setting.system.securityImageDomainsHint') }}</VCardSubtitle>
+                      <VCardTitle>{{
+                        t(
+                          "setting.system.advancedSettings.network.securityImageDomains.title"
+                        )
+                      }}</VCardTitle>
+                      <VCardSubtitle>{{
+                        t(
+                          "setting.system.advancedSettings.network.securityImageDomains.subtitle"
+                        )
+                      }}</VCardSubtitle>
                     </VCardItem>
                     <VCardText>
                       <div class="d-flex flex-wrap gap-2 mb-3">
                         <VChip
-                          v-for="(domain, index) in SystemSettings.Advanced.SECURITY_IMAGE_DOMAINS"
+                          v-for="(domain, index) in SystemSettings.Advanced
+                            .SECURITY_IMAGE_DOMAINS"
                           :key="index"
                           closable
-                          @click:close="SystemSettings.Advanced.SECURITY_IMAGE_DOMAINS.splice(index, 1)"
+                          @click:close="
+                            SystemSettings.Advanced.SECURITY_IMAGE_DOMAINS.splice(
+                              index,
+                              1
+                            )
+                          "
                         >
                           {{ domain }}
                         </VChip>
-                        <VChip v-if="SystemSettings.Advanced.SECURITY_IMAGE_DOMAINS.length === 0" color="warning">
-                          {{ t('setting.system.noSecurityImageDomains') }}
+                        <VChip
+                          v-if="
+                            SystemSettings.Advanced.SECURITY_IMAGE_DOMAINS
+                              .length === 0
+                          "
+                          color="warning"
+                        >
+                          {{
+                            t(
+                              "setting.system.advancedSettings.network.securityImageDomains.noData"
+                            )
+                          }}
                         </VChip>
                       </div>
                       <div class="d-flex align-center gap-2">
                         <VTextField
                           v-model="newSecurityDomain"
-                          :placeholder="t('setting.system.securityImageDomainAdd')"
+                          :placeholder="
+                            t(
+                              'setting.system.advancedSettings.network.securityImageDomains.placeholder'
+                            )
+                          "
                           hide-details
                           density="compact"
                         >
                           <template #append>
-                            <VBtn icon color="primary" @click="addSecurityDomain" :disabled="!newSecurityDomain">
+                            <VBtn
+                              icon
+                              color="primary"
+                              @click="addSecurityDomain"
+                              :disabled="!newSecurityDomain"
+                            >
                               <VIcon icon="mdi-plus" />
                             </VBtn>
                           </template>
@@ -905,8 +1215,10 @@ onDeactivated(() => {
                 <VCol cols="12" md="6">
                   <VSwitch
                     v-model="SystemSettings.Advanced.DEBUG"
-                    :label="t('setting.system.debug')"
-                    :hint="t('setting.system.debugHint')"
+                    :label="
+                      t('setting.system.advancedSettings.log.debug.label')
+                    "
+                    :hint="t('setting.system.advancedSettings.log.debug.hint')"
                     persistent-hint
                   />
                 </VCol>
@@ -914,8 +1226,12 @@ onDeactivated(() => {
                   <VSelect
                     v-if="!SystemSettings.Advanced.DEBUG"
                     v-model="SystemSettings.Advanced.LOG_LEVEL"
-                    :label="t('setting.system.logLevel')"
-                    :hint="t('setting.system.logLevelHint')"
+                    :label="
+                      t('setting.system.advancedSettings.log.logLevel.label')
+                    "
+                    :hint="
+                      t('setting.system.advancedSettings.log.logLevel.hint')
+                    "
                     persistent-hint
                     :items="logLevelItems"
                   />
@@ -923,31 +1239,65 @@ onDeactivated(() => {
                 <VCol cols="12" md="6">
                   <VTextField
                     v-model="SystemSettings.Advanced.LOG_MAX_FILE_SIZE"
-                    :label="t('setting.system.logMaxFileSize')"
-                    :hint="t('setting.system.logMaxFileSizeHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.log.logMaxFileSize.label'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.log.logMaxFileSize.hint'
+                      )
+                    "
                     persistent-hint
                     min="1"
                     type="number"
-                    :suffix="t('setting.system.mb')"
-                    :rules="[(v: any) => v === 0 || !!v || t('setting.system.logMaxFileSizeRequired'), (v: any) => v >= 1 || t('setting.system.logMaxFileSizeMin')]"
+                    :suffix="
+                      t(
+                        'setting.system.advancedSettings.log.logMaxFileSize.unit'
+                      )
+                    "
+                    :rules="[
+                      (v: any) => v === 0 || !!v || t('setting.system.advancedSettings.log.logMaxFileSize.rules.required'),
+                      (v: any) => v >= 1 || t('setting.system.advancedSettings.log.logMaxFileSize.rules.min')
+                      ]"
                   />
                 </VCol>
                 <VCol cols="12" md="6">
                   <VTextField
                     v-model="SystemSettings.Advanced.LOG_BACKUP_COUNT"
-                    :label="t('setting.system.logBackupCount')"
-                    :hint="t('setting.system.logBackupCountHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.log.logBackupCount.label'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.log.logBackupCount.hint'
+                      )
+                    "
                     persistent-hint
                     min="1"
                     type="number"
-                    :rules="[(v: any) => v === 0 || !!v || t('setting.system.logBackupCountRequired'), (v: any) => v >= 1 || t('setting.system.logBackupCountMin')]"
+                    :rules="[
+                      (v: any) => v === 0 || !!v || t('setting.system.advancedSettings.log.logBackupCount.rules.required'), 
+                      (v: any) => v >= 1 || t('setting.system.advancedSettings.log.logBackupCount.rules.min')
+                      ]"
                   />
                 </VCol>
                 <VCol cols="12">
                   <VTextField
                     v-model="SystemSettings.Advanced.LOG_FILE_FORMAT"
-                    :label="t('setting.system.logFileFormat')"
-                    :hint="t('setting.system.logFileFormatHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.log.logFileFormat.label'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.log.logFileFormat.hint'
+                      )
+                    "
                     persistent-hint
                   />
                 </VCol>
@@ -960,24 +1310,51 @@ onDeactivated(() => {
                 <VCol cols="12" md="6">
                   <VSwitch
                     v-model="SystemSettings.Advanced.PLUGIN_AUTO_RELOAD"
-                    :label="t('setting.system.pluginAutoReload')"
-                    :hint="t('setting.system.pluginAutoReloadHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.lab.pluginAutoReload.label'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.lab.pluginAutoReload.hint'
+                      )
+                    "
                     persistent-hint
                   />
                 </VCol>
                 <VCol cols="12" md="6">
                   <VSwitch
-                    v-model="SystemSettings.Advanced.ENCODING_DETECTION_PERFORMANCE_MODE"
-                    :label="t('setting.system.encodingDetectionPerformanceMode')"
-                    :hint="t('setting.system.encodingDetectionPerformanceModeHint')"
+                    v-model="
+                      SystemSettings.Advanced
+                        .ENCODING_DETECTION_PERFORMANCE_MODE
+                    "
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.lab.encodingDetectionPerformanceMode.label'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.lab.encodingDetectionPerformanceMode.hint'
+                      )
+                    "
                     persistent-hint
                   />
                 </VCol>
                 <VCol cols="12" md="6">
                   <VSwitch
                     v-model="SystemSettings.Advanced.TOKENIZED_SEARCH"
-                    :label="t('setting.system.tokenizedSearch')"
-                    :hint="t('setting.system.tokenizedSearchHint')"
+                    :label="
+                      t(
+                        'setting.system.advancedSettings.lab.tokenizedSearch.label'
+                      )
+                    "
+                    :hint="
+                      t(
+                        'setting.system.advancedSettings.lab.tokenizedSearch.hint'
+                      )
+                    "
                     persistent-hint
                   />
                 </VCol>
@@ -989,8 +1366,13 @@ onDeactivated(() => {
       <VCardActions class="pt-3">
         <VForm @submit.prevent="() => {}">
           <div class="d-flex flex-wrap gap-4 mt-4">
-            <VBtn color="primary" prepend-icon="mdi-content-save" @click="saveAdvancedSettings" class="px-5">
-              {{ t('common.save') }}
+            <VBtn
+              color="primary"
+              prepend-icon="mdi-content-save"
+              @click="saveAdvancedSettings"
+              class="px-5"
+            >
+              {{ t("common.save") }}
             </VBtn>
           </div>
         </VForm>
