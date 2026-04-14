@@ -2,6 +2,7 @@
 import type { PropType } from 'vue'
 import MarkdownIt from 'markdown-it'
 import mdLinkAttributes from 'markdown-it-link-attributes'
+import type { PluginReleaseEntry } from '@/api/types'
 
 // 初始化 markdown-it
 const md = new MarkdownIt({
@@ -24,15 +25,67 @@ function renderMarkdown(value: string) {
   return md.render(value)
 }
 
-// 输入参数
+// 输入参数：
+// - releases: Aqr-K 清单的结构化版本列表（优先使用）
+// - history : 旧版 jxxghp 清单的 {version: text} 字典（fallback）
 const props = defineProps({
+  releases: {
+    type: Array as PropType<PluginReleaseEntry[]>,
+    default: () => [],
+  },
   history: Object as PropType<{ [key: string]: string }>,
 })
+
+const useReleases = computed(() => Array.isArray(props.releases) && props.releases.length > 0)
 </script>
 
 <template>
   <VCardText>
-    <VList>
+    <VList v-if="useReleases">
+      <VListItem v-for="entry in props.releases" :key="`${entry.channel}-${entry.version}`">
+        <VListItemTitle class="font-bold text-lg d-flex align-center gap-2">
+          <span>{{ entry.version }}</span>
+          <VChip
+            v-if="entry.channel === 'prerelease'"
+            size="x-small"
+            color="warning"
+            variant="tonal"
+          >
+            pre-release
+          </VChip>
+          <VChip
+            v-else
+            size="x-small"
+            color="success"
+            variant="tonal"
+          >
+            stable
+          </VChip>
+          <VChip
+            v-if="entry.is_compatible === false"
+            size="x-small"
+            color="error"
+            variant="tonal"
+          >
+            不兼容
+          </VChip>
+          <VChip
+            v-if="entry.requires_version?.backend"
+            size="x-small"
+            color="info"
+            variant="outlined"
+          >
+            backend {{ entry.requires_version.backend }}
+          </VChip>
+        </VListItemTitle>
+        <div
+          v-if="entry.history"
+          class="markdown-body text-gray-500"
+          v-html="renderMarkdown(entry.history)"
+        />
+      </VListItem>
+    </VList>
+    <VList v-else>
       <VListItem v-for="(value, key) in props.history" :key="key">
         <VListItemTitle class="font-bold text-lg">
           {{ key }}

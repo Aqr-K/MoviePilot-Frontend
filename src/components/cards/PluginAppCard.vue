@@ -69,6 +69,27 @@ async function imageLoaded() {
   backgroundColor.value = await getDominantColor(imageElement)
 }
 
+// 可安装版本列表（来自 Aqr-K 清单；旧清单为空数组，使用默认单版本安装流程）
+const availableReleases = computed(() => props.plugin?.releases ?? [])
+
+// 选中的版本（默认：展示版本）
+const selectedVersion = ref<string | undefined>(undefined)
+watch(
+  () => props.plugin,
+  p => {
+    selectedVersion.value = p?.plugin_version ?? undefined
+  },
+  { immediate: true },
+)
+
+// 选中条目（用于判断通道/兼容性）
+const selectedEntry = computed(() =>
+  availableReleases.value.find(e => e.version === selectedVersion.value),
+)
+
+// 选中版本是否不兼容（禁用安装按钮）
+const selectedIncompatible = computed(() => selectedEntry.value?.is_compatible === false)
+
 // 安装插件
 async function installPlugin() {
   try {
@@ -76,13 +97,15 @@ async function installPlugin() {
     progressDialog.value = true
     progressText.value = t('plugin.installing', {
       name: props.plugin?.plugin_name,
-      version: props?.plugin?.plugin_version,
+      version: selectedVersion.value ?? props?.plugin?.plugin_version,
     })
 
     const result: { [key: string]: any } = await api.get(`plugin/install/${props.plugin?.id}`, {
       params: {
         repo_url: props.plugin?.repo_url,
         force: props.plugin?.has_update,
+        // 显式传入用户所选版本；未选择（旧清单）则不传，后端走默认规则
+        ...(selectedVersion.value ? { version: selectedVersion.value } : {}),
       },
     })
 
@@ -156,7 +179,7 @@ const dropdownItems = ref([
   {
     title: t('plugin.updateHistory'),
     value: 2,
-    show: !isNullOrEmptyObject(props.plugin?.history || {}),
+    show: (props.plugin?.releases?.length ?? 0) > 0 || !isNullOrEmptyObject(props.plugin?.history || {}),
     props: {
       prependIcon: 'mdi-update',
       click: showUpdateHistory,
@@ -274,7 +297,7 @@ const dropdownItems = ref([
       <VCard :title="t('plugin.updateHistoryTitle', { name: props.plugin?.plugin_name })">
         <VDialogCloseBtn @click="releaseDialog = false" />
         <VDivider />
-        <VersionHistory :history="props.plugin?.history" />
+        <VersionHistory :releases="props.plugin?.releases ?? []" :history="props.plugin?.history" />
       </VCard>
     </VDialog>
     <!-- 插件详情-->
@@ -323,9 +346,49 @@ const dropdownItems = ref([
                     </VListItem>
                   </VList>
                   <div class="text-center text-md-left">
-                    <VBtn color="primary" @click="installPlugin" prepend-icon="mdi-download">{{
-                      t('plugin.installToLocal')
-                    }}</VBtn>
+                    <!-- 版本选择器：仅当清单提供了 releases 列表时显示 -->
+                    <VSelect
+                      v-if="availableReleases.length > 0"
+                      v-model="selectedVersion"
+                      :items="availableReleases.map(e => ({
+                        title: e.version,
+                        value: e.version,
+                        subtitle: e.channel === 'prerelease' ? 'pre-release' : 'stable',
+                        props: { disabled: e.is_compatible === false },
+                      }))"
+                      :label="t('common.version')"
+                      density="compact"
+                      variant="outlined"
+                      hide-details
+                      class="mb-2 max-w-56"
+                      item-title="title"
+                      item-value="value"
+                    >
+                      <template #selection="{ item }">
+                        <div class="d-flex align-center gap-2">
+                          <span>v{{ item.raw.value }}</span>
+                          <VChip
+                            v-if="item.raw.subtitle === 'pre-release'"
+                            size="x-small"
+                            color="warning"
+                            variant="tonal"
+                          >
+                            pre
+                          </VChip>
+                        </div>
+                      </template>
+                    </VSelect>
+                    <div v-if="selectedIncompatible" class="text-xs text-error mb-1">
+                      与当前后端版本不兼容（需要 {{ selectedEntry?.requires_version?.backend }}）
+                    </div>
+                    <VBtn
+                      color="primary"
+                      :disabled="selectedIncompatible"
+                      @click="installPlugin"
+                      prepend-icon="mdi-download"
+                    >
+                      {{ t('plugin.installToLocal') }}
+                    </VBtn>
                     <div class="text-xs mt-2" v-if="props.count">
                       <VIcon icon="mdi-fire" />{{
                         t('plugin.totalDownloads', { count: formatDownloadCount(props.count) })

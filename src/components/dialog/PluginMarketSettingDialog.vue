@@ -16,6 +16,8 @@ const $toast = useToast()
 const repoString = ref('')
 // 用于显示的仓库地址数组
 const repoArray = ref<string[]>([])
+// 是否纳入插件预发布版本（PLUGIN_INCLUDE_PRERELEASE）
+const includePrerelease = ref(false)
 
 // 计算属性：在数组和换行符分隔的字符串之间转换
 const displayRepos = computed({
@@ -41,12 +43,28 @@ async function queryMarketRepoSetting() {
   }
 }
 
+// 查询预发布开关
+async function queryPrereleaseSetting() {
+  try {
+    const result: { [key: string]: any } = await api.get('system/setting/PLUGIN_INCLUDE_PRERELEASE')
+    includePrerelease.value = result?.data?.value === true || result?.data?.value === 'true'
+  } catch (error) {
+    console.log(error)
+  }
+}
+
 // 保存设置
 async function saveHandle() {
   try {
     // 将数组转换为逗号分隔的字符串
     const repoStringToSave = repoArray.value.join(',')
     const result: { [key: string]: any } = await api.post('system/setting/PLUGIN_MARKET', repoStringToSave)
+    // 同步保存预发布开关；失败不阻断主流程
+    try {
+      await api.post('system/setting/PLUGIN_INCLUDE_PRERELEASE', includePrerelease.value)
+    } catch (e) {
+      console.log(e)
+    }
 
     if (result.success) {
       $toast.success(t('dialog.pluginMarketSetting.saveSuccess'))
@@ -59,6 +77,7 @@ async function saveHandle() {
 
 onMounted(() => {
   queryMarketRepoSetting()
+  queryPrereleaseSetting()
 })
 </script>
 
@@ -80,6 +99,14 @@ onMounted(() => {
           :hint="t('dialog.pluginMarketSetting.repoHint')"
           persistent-hint
           auto-grow
+        />
+        <VSwitch
+          v-model="includePrerelease"
+          class="mt-4"
+          label="显示并允许安装插件预发布版本 (pre_release)"
+          hint="仅对采用 Aqr-K 清单格式 (release / pre_release) 的仓库生效；已安装预发布版本时，更新提示按语义化版本比较，失败则回退字符串不等。"
+          persistent-hint
+          color="warning"
         />
       </VCardText>
       <VCardActions>

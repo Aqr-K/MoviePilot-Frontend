@@ -613,6 +613,22 @@ export interface NotExistMediaInfo {
   start_episode: number
 }
 
+// 插件清单：发布所声明的后/前端版本范围
+export interface RequiresVersion {
+  backend?: string | null
+  frontend?: string | null
+}
+
+// 插件清单：一个具体 release/pre_release tag（来自 Aqr-K 格式 package.v2.json）
+export interface PluginReleaseEntry {
+  version: string
+  channel: 'stable' | 'prerelease'
+  history?: string | null
+  requires_version?: RequiresVersion | null
+  // 后端算出：该 tag 与当前后端版本的兼容性（前端兼容性由前端另行判断）
+  is_compatible: boolean
+}
+
 // 插件
 export interface Plugin {
   id: string
@@ -624,7 +640,7 @@ export interface Plugin {
   plugin_icon?: string
   // 插件标签，多个以,分隔
   plugin_label?: string
-  // 插件版本
+  // 插件版本（展示版本：对 Aqr-K 清单为 latest_stable 或 latest_prerelease）
   plugin_version?: string
   // 插件作者
   plugin_author?: string
@@ -648,12 +664,28 @@ export interface Plugin {
   is_local?: boolean
   // 插件仓库地址
   repo_url?: string
-  // 变更历史
+  // 变更历史（旧版 jxxghp 清单的 history 字典；Aqr-K 清单请用 releases）
   history?: { [key: string]: string }
   // 添加时间
   add_time?: number
   // 页面打开状态
   page_open?: boolean
+  // ===== Aqr-K 清单扩展 =====
+  // 所有可安装版本（合并 release + pre_release，按 semver 降序）
+  releases?: PluginReleaseEntry[]
+  // 稳定通道最新版
+  latest_stable?: string | null
+  // 预发布通道最新版
+  latest_prerelease?: string | null
+  // 已安装版本
+  installed_version?: string | null
+  // 已安装所在通道：'stable' | 'prerelease' | 'legacy'
+  installed_channel?: 'stable' | 'prerelease' | 'legacy' | null
+  // 展示版本对应的后端兼容性
+  is_compatible?: boolean
+  // 兼容性声明（供提示展示）
+  compat_backend?: string | null
+  compat_frontend?: string | null
 }
 
 // 插件侧栏全页导航项（与后端 PluginSidebarNavItem 对齐）

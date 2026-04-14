@@ -552,7 +552,7 @@ watch(
       <VCard :title="t('plugin.updateHistoryTitle', { name: props.plugin?.plugin_name })">
         <VDialogCloseBtn @click="releaseDialog = false" />
         <VDivider />
-        <VersionHistory :history="props.plugin?.history" />
+        <VersionHistory :releases="props.plugin?.releases ?? []" :history="props.plugin?.history" />
         <VDivider />
         <VCardItem>
           <VBtn @click="updatePlugin" block>
