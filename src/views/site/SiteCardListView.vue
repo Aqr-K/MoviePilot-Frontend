@@ -7,7 +7,7 @@ import NoDataFound from '@/components/NoDataFound.vue'
 import SiteAddEditDialog from '@/components/dialog/SiteAddEditDialog.vue'
 import SiteStatisticsDialog from '@/components/dialog/SiteStatisticsDialog.vue'
 import SiteImportDialog from '@/components/dialog/SiteImportDialog.vue'
-import ProgressiveCardGrid from '@/components/misc/ProgressiveCardGrid.vue'
+import VirtualGrid from '@/components/virtual/VirtualGrid.vue'
 import { useDynamicButton } from '@/composables/useDynamicButton'
 import { useI18n } from 'vue-i18n'
 import { usePWA } from '@/composables/usePWA'
@@ -422,14 +422,18 @@ useDynamicButton({
         />
       </template>
     </draggable>
-    <ProgressiveCardGrid
+    <VirtualGrid
       v-else-if="draggableSiteList.length > 0 && shouldVirtualizeList"
       :items="draggableSiteList"
-      :get-item-key="item => item.id"
-      :min-item-width="256"
+      :breakpoints="{ xs: 1, sm: 2, md: 3, lg: 4, xl: 5, xxl: 5 }"
+      :row-estimate-size="220"
+      :gap="16"
+      :overscan="3"
+      key-field="id"
+      use-window-scroll
       class="px-2"
     >
-      <template #default="{ item }">
+      <template #item="{ item }">
         <SiteCard
           :site="item"
           :data="siteUserDataMap[item.domain]"
@@ -440,7 +444,7 @@ useDynamicButton({
           @refresh-stats="handleRefreshStats"
         />
       </template>
-    </ProgressiveCardGrid>
+    </VirtualGrid>
   </div>
   <NoDataFound
     v-if="draggableSiteList.length === 0 && isRefreshed"

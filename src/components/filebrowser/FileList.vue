@@ -14,6 +14,7 @@ import { useI18n } from 'vue-i18n'
 import { useBackgroundOptimization } from '@/composables/useBackgroundOptimization'
 import { usePWA } from '@/composables/usePWA'
 import { useAvailableHeight } from '@/composables/useAvailableHeight'
+import VirtualList from '@/components/virtual/VirtualList.vue'
 
 // 国际化
 const { t } = useI18n()
@@ -699,8 +700,13 @@ onUnmounted(() => {
           class="text-high-emphasis file-list-container"
           :style="{ height: `${listAvailableHeight}px`, maxHeight: `${listAvailableHeight}px` }"
         >
-          <VVirtualScroll :items="[...dirs, ...files]" style="block-size: 100%">
-            <template #default="{ item }">
+          <VirtualList
+            :items="[...dirs, ...files]"
+            :estimate-size="56"
+            :overscan="8"
+            :container-height="`${listAvailableHeight}px`"
+          >
+            <template #item="{ item }">
               <VHover>
                 <template #default="hover">
                   <VListItem v-bind="hover.props" class="px-3 pe-1" @click="listItemClick(item)">
@@ -763,7 +769,7 @@ onUnmounted(() => {
                 </template>
               </VHover>
             </template>
-          </VVirtualScroll>
+          </VirtualList>
         </VList>
       </VCardText>
       <VCardText v-else-if="filter" class="grow d-flex justify-center align-center grey--text py-5">
