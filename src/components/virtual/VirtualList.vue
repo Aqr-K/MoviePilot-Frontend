@@ -26,7 +26,8 @@
 
 <script setup lang="ts" generic="T extends Record<string, any>">
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
-import { useVirtualizer, type VirtualItem } from '@tanstack/vue-virtual'
+import { useVirtualizer, useWindowVirtualizer, type VirtualItem } from '@tanstack/vue-virtual'
+import { useIntersectionObserver } from '@vueuse/core'
 
 const props = withDefaults(
   defineProps<{
@@ -99,66 +100,120 @@ onBeforeUnmount(() => {
   resizeObserver = null
 })
 
-const virtualizer = useVirtualizer({
-  get count() {
-    return props.items.length
-  },
-  getScrollElement: () => {
-    if (props.useWindowScroll) {
-      return typeof document !== 'undefined' ? (document.scrollingElement as HTMLElement | null) : null
-    }
-    return scrollEl.value
-  },
-  estimateSize: () => props.estimateSize,
-  get overscan() {
-    return props.overscan
-  },
-  get scrollMargin() {
-    return scrollMargin.value
-  },
-  getItemKey: (i: number) =>
-    props.keyField ? (props.items[i]?.[props.keyField] as string | number) : i,
-})
+// 必须根据 useWindowScroll 切换：scroll 事件不冒泡到 <html>，
+// useVirtualizer + document.scrollingElement 会让 virtualizer 永远以为
+// scrollOffset=0 → 虚拟化失效。
+const virtualizer = (props.useWindowScroll
+  ? useWindowVirtualizer({
+      get count() {
+        return props.items.length
+      },
+      estimateSize: () => props.estimateSize,
+      get overscan() {
+        return props.overscan
+      },
+      get scrollMargin() {
+        return scrollMargin.value
+      },
+      getItemKey: (i: number) =>
+        props.keyField ? (props.items[i]?.[props.keyField] as string | number) : i,
+    })
+  : useVirtualizer({
+      get count() {
+        return props.items.length
+      },
+      getScrollElement: () => scrollEl.value,
+      estimateSize: () => props.estimateSize,
+      get overscan() {
+        return props.overscan
+      },
+      get scrollMargin() {
+        return scrollMargin.value
+      },
+      getItemKey: (i: number) =>
+        props.keyField ? (props.items[i]?.[props.keyField] as string | number) : i,
+    })) as unknown as ReturnType<typeof useVirtualizer<Element, Element>>
 
 const totalSize = computed(() => virtualizer.value.getTotalSize())
 const virtualItems = computed<VirtualItem[]>(() => virtualizer.value.getVirtualItems())
 
 /**
- * 触底加载 / 触顶加载哨兵。
- * 注意：业务侧的 loadMore / loadMoreReverse 必须自己持有 loading 锁，
- * 防止 watcher 在数据 push/unshift 后又触发并发请求。
+ * 触底 / 触顶加载哨兵：
+ * sentinel 在视口内 + items 自上次 fire 起已变化 → fire；
+ * sentinel 离开视口 → 解锁；
+ * 关键：IntersectionObserver 只在 isIntersecting 边沿变化时回调，
+ * 短列表里 sentinel 可能持续 intersecting，需要 items.length watcher 兜底
+ * 让 tryFire 重新评估，否则只能 fire 一次后死锁。
+ * 业务侧的 loadMore / loadMoreReverse 仍需自己持有 loading 锁防并发。
  */
-let lastLoadIndex = -1
-let lastReverseLoadIndex = Number.MAX_SAFE_INTEGER
-watch(virtualItems, items => {
-  if (!props.items.length) return
-  const last = items.at(-1)
-  if (last && last.index >= props.items.length - props.loadMoreThreshold && last.index !== lastLoadIndex) {
-    lastLoadIndex = last.index
-    emit('loadMore')
-  }
-  // 反向加载：仅当 loadMoreReverseThreshold > 0 时启用
-  if (props.loadMoreReverseThreshold > 0) {
-    const first = items[0]
-    if (first && first.index <= props.loadMoreReverseThreshold && first.index !== lastReverseLoadIndex) {
-      lastReverseLoadIndex = first.index
-      emit('loadMoreReverse')
-    }
-  }
-})
+const loadMoreSentinel = ref<HTMLElement | null>(null)
+const loadMoreReverseSentinel = ref<HTMLElement | null>(null)
+let isSentinelIntersecting = false
+let isReverseSentinelIntersecting = false
+let lastFireItemsLen = -1
+let lastReverseFireItemsLen = -1
+
+const sentinelRoot = computed(() => (props.useWindowScroll ? null : scrollEl.value))
+
+function tryFireLoadMore() {
+  if (!isSentinelIntersecting) return
+  if (lastFireItemsLen >= 0 && props.items.length === lastFireItemsLen) return
+  lastFireItemsLen = props.items.length
+  emit('loadMore')
+}
+
+function tryFireLoadMoreReverse() {
+  if (props.loadMoreReverseThreshold <= 0) return
+  if (!isReverseSentinelIntersecting) return
+  if (lastReverseFireItemsLen >= 0 && props.items.length === lastReverseFireItemsLen) return
+  lastReverseFireItemsLen = props.items.length
+  emit('loadMoreReverse')
+}
+
+useIntersectionObserver(
+  loadMoreSentinel,
+  ([entry]: IntersectionObserverEntry[]) => {
+    isSentinelIntersecting = entry.isIntersecting
+    if (isSentinelIntersecting) tryFireLoadMore()
+  },
+  { root: sentinelRoot, rootMargin: '200px', threshold: 0 },
+)
+
+useIntersectionObserver(
+  loadMoreReverseSentinel,
+  ([entry]: IntersectionObserverEntry[]) => {
+    isReverseSentinelIntersecting = entry.isIntersecting
+    if (isReverseSentinelIntersecting) tryFireLoadMoreReverse()
+  },
+  { root: sentinelRoot, rootMargin: '200px', threshold: 0 },
+)
 
 watch(
   () => props.items.length,
-  len => {
+  (len: number) => {
     if (len === 0) {
-      lastLoadIndex = -1
-      lastReverseLoadIndex = Number.MAX_SAFE_INTEGER
+      lastFireItemsLen = -1
+      lastReverseFireItemsLen = -1
+      return
     }
+    nextTick(() => {
+      tryFireLoadMore()
+      tryFireLoadMoreReverse()
+    })
   },
 )
 
 function measureRef(el: any) {
-  if (el instanceof HTMLElement) virtualizer.value.measureElement(el)
+  if (el instanceof HTMLElement) {
+    virtualizer.value.measureElement(el)
+  } else {
+    // 项卸载时 Vue 用 null 调用本回调。必须把 null 转发给 measureElement，
+    // 否则 @tanstack/virtual-core 永远不会执行 elementsCache 的清理分支
+    // （它只在 measureElement(null) 时遍历并 unobserve 掉 !isConnected 的元素）。
+    // 不转发的话 ResizeObserver 会强引用每一个曾渲染过的项元素，
+    // detached DOM 无法 GC → 钉住其下所有 Vue 组件实例（内存泄漏根因）。
+    virtualizer.value.measureElement(null)
+  }
 }
 
 defineExpose({
@@ -192,6 +247,14 @@ const containerStyle = computed(() => {
   <div ref="scrollEl" :style="containerStyle" @scroll="emit('scroll', $event)">
     <slot v-if="!items.length" name="empty" />
 
+    <!-- 顶部 sentinel：反向加载（聊天往上加载）-->
+    <div
+      v-if="items.length && loadMoreReverseThreshold > 0"
+      ref="loadMoreReverseSentinel"
+      aria-hidden="true"
+      style="height: 1px; width: 100%"
+    />
+
     <div :style="{ height: `${totalSize}px`, position: 'relative', width: '100%' }">
       <div
         v-for="v in virtualItems"
@@ -210,6 +273,14 @@ const containerStyle = computed(() => {
         <slot name="item" :item="items[v.index]" :index="v.index" :virtual="v" />
       </div>
     </div>
+
+    <!-- 底部 sentinel：触底加载 -->
+    <div
+      v-if="items.length"
+      ref="loadMoreSentinel"
+      aria-hidden="true"
+      style="height: 1px; width: 100%"
+    />
 
     <slot name="loading" />
   </div>
