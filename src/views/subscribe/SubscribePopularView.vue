@@ -11,7 +11,7 @@ import { useI18n } from 'vue-i18n'
 const { t } = useI18n()
 
 // 列数：按视口断点（路由级全宽页）
-const cols = useBreakpointCols({ xs: 3, sm: 4, md: 6, lg: 8, xl: 10, xxl: 12 })
+const cols = useBreakpointCols({ xs: 2, sm: 4, md: 6, lg: 8, xl: 10, xxl: 12 })
 
 // 输入参数
 const props = defineProps({
@@ -204,9 +204,10 @@ onMounted(() => {
     :key="currentKey"
     :items="dataList"
     :columns="cols"
-    :row-estimate-size="320"
+    :row-estimate-size="260"
     :gap="16"
     :overscan="3"
+    :get-item-key="(item, index) => item.tmdb_id || item.douban_id || item.bangumi_id || item.imdb_id || item.tvdb_id || item.media_id || item.title || index"
     use-window-scroll
     class="pt-2 px-3"
     @load-more="fetchData"

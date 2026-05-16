@@ -9,8 +9,10 @@ import { useI18n } from 'vue-i18n'
 
 const { t } = useI18n()
 
-// 列数：按视口断点（路由级全宽页）
-const cols = useBreakpointCols({ xs: 3, sm: 4, md: 6, lg: 8, xl: 10, xxl: 12 })
+// 列数：按视口断点（路由级全宽页）。
+// xs:2 匹配 legacy `.grid-media-card { minmax(9rem, 1fr) }` 在 iPhone 上的视觉宽度，
+// 避免移动端卡片缩到 ~143px。
+const cols = useBreakpointCols({ xs: 2, sm: 4, md: 6, lg: 8, xl: 10, xxl: 12 })
 
 // 输入参数
 const props = defineProps({
@@ -102,9 +104,10 @@ onMounted(() => {
     v-if="isRefreshed && dataList.length > 0"
     :items="dataList"
     :columns="cols"
-    :row-estimate-size="280"
+    :row-estimate-size="220"
     :gap="16"
     :overscan="3"
+    :get-item-key="(item, index) => item.tmdb_id || item.douban_id || item.bangumi_id || item.imdb_id || item.tvdb_id || item.media_id || item.title || index"
     use-window-scroll
     class="pt-3 px-3"
     @load-more="fetchData"
