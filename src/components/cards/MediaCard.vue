@@ -21,6 +21,7 @@ import {
   setCachedMediaExistsStatus,
   setCachedMediaSubscribeStatus,
 } from '@/utils/mediaStatusCache'
+import { useSharedObserver } from '@/composables/useSharedObserver'
 
 // 国际化
 const { t } = useI18n()
@@ -82,8 +83,9 @@ const sourceIconDict: { [key: string]: any } = {
 // 绑定MediaCard元素
 const mediaCardRef = ref<HTMLElement | null>(null)
 
-// 创建Intersection Observer实例
-const observer = ref<IntersectionObserver | null>(null)
+// 共享根级 IntersectionObserver —— 替代每张卡自建一个 observer，
+// 减少 observer 注册/销毁的 churn（虚拟化场景下 mount/unmount 频繁尤为重要）
+const { observe: sharedObserve, unobserve: sharedUnobserve } = useSharedObserver()
 
 // 所有站点
 const allSites = ref<Site[]>([])
@@ -418,25 +420,16 @@ function handleCheckLazy() {
   handleCheckExists()
 }
 
-// 在元素进入视窗时触发懒加载函数
+// 进入视窗时触发懒加载，触发后立即从共享 observer 注销（fire-and-forget）。
 function setupIntersectionObserver() {
-  if (mediaCardRef.value) {
-    observer.value = new IntersectionObserver(
-      entries => {
-        entries.forEach(entry => {
-          if (entry.isIntersecting) {
-            // 只要MediaCard进入视窗，就调用懒加载的操作
-            handleCheckLazy()
-            // 加载后销毁观察者实例
-            observer.value?.disconnect()
-            observer.value = null
-          }
-        })
-      },
-      { threshold: 0.1 },
-    )
-    observer.value.observe(mediaCardRef.value)
-  }
+  if (!mediaCardRef.value) return
+  const el = mediaCardRef.value
+  sharedObserve(el, entry => {
+    if (entry.isIntersecting) {
+      handleCheckLazy()
+      sharedUnobserve(el)
+    }
+  })
 }
 
 // 包装 URL：根据全局开关走系统图片缓存或 douban 代理
@@ -486,17 +479,7 @@ onMounted(() => {
   setupIntersectionObserver()
 })
 
-onBeforeUnmount(() => {
-  observer.value?.disconnect()
-  observer.value = null
-})
-
-// keep-alive 缓存场景下 onBeforeUnmount 不会触发，需要在 onDeactivated 主动 disconnect
-// 防止冻结的卡片继续持有 observer 引用
-onDeactivated(() => {
-  observer.value?.disconnect()
-  observer.value = null
-})
+// 共享 observer 的 unobserve 由 useSharedObserver 自动在 onBeforeUnmount / onDeactivated 处理
 </script>
 
 <template>
