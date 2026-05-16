@@ -31,12 +31,22 @@ export function useWindowScrollMargin(scrollEl: Ref<HTMLElement | null>, enabled
   let resizeObserver: ResizeObserver | null = null
   let rafId: number | null = null
 
+  // iOS Safari URL bar 折叠/展开期间，rect.top + scrollY 会出现亚像素~1px 级抖动。
+  // 直接写回响应式 ref 会触发所有 virtual 项 transform 重排 → 视觉抖动、
+  // 触摸期 click 落空（卡片在 touchstart→touchend 之间被平移）。
+  // 加 2px 阈值过滤噪声：真实"上方面板撑高"通常 ≥ 24px，绝不会被吞掉；
+  // 而 iOS URL bar 抖动通常 < 2px，被静音。
+  const SCROLL_MARGIN_THRESHOLD = 2
+
   function updateScrollMargin() {
     if (!enabled() || !scrollEl.value || typeof window === 'undefined') {
-      scrollMargin.value = 0
+      if (scrollMargin.value !== 0) scrollMargin.value = 0
       return
     }
-    scrollMargin.value = scrollEl.value.getBoundingClientRect().top + window.scrollY
+    const next = scrollEl.value.getBoundingClientRect().top + window.scrollY
+    if (Math.abs(next - scrollMargin.value) >= SCROLL_MARGIN_THRESHOLD) {
+      scrollMargin.value = next
+    }
   }
 
   // scroll 自愈：rAF 节流，避免占用滚动热路径。
