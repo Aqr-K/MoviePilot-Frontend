@@ -29,6 +29,12 @@ html.v-overlay-scroll-blocked body {
   }
 }
 
+// 阻断 iOS Safari 原生下拉刷新与本应用 usePullDownGesture 的冲突。
+// `contain` 不影响应用内部 touch 事件链路，只切断 overscroll 冒泡到浏览器层。
+html, body {
+  overscroll-behavior-y: contain;
+}
+
 // 进度条样式
 #nprogress .bar {
   background: rgb(var(--v-theme-primary)) !important;
