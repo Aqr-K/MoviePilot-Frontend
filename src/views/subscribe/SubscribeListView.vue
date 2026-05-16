@@ -5,6 +5,12 @@ import type { Subscribe } from '@/api/types'
 import NoDataFound from '@/components/NoDataFound.vue'
 import SubscribeCard from '@/components/cards/SubscribeCard.vue'
 import SubscribeHistoryDialog from '@/components/dialog/SubscribeHistoryDialog.vue'
+// 弹窗从 SubscribeCard 提升到此处，脱离虚拟化卡片生命周期
+// （iOS 26 上 Vuetify body-lock 触发 ResizeObserver → tanstack 重算可视区 →
+//  被点击的卡片被虚拟化 unmount → 卡片内部 v-if 弹窗一起销毁）
+import SubscribeEditDialog from '@/components/dialog/SubscribeEditDialog.vue'
+import SubscribeFilesDialog from '@/components/dialog/SubscribeFilesDialog.vue'
+import SubscribeShareDialog from '@/components/dialog/SubscribeShareDialog.vue'
 import VirtualGrid from '@/components/virtual/VirtualGrid.vue'
 import { useBreakpointCols } from '@/composables/virtual/useBreakpointCols'
 import { useUserStore } from '@/stores'
@@ -58,6 +64,30 @@ const dataList = ref<Subscribe[]>([])
 
 // 历史记录弹窗
 const historyDialog = ref(false)
+
+// 提升的弹窗状态：编辑 / 文件 / 分享。三者互斥，但写成独立 ref 以保留各自的 close 语义。
+// 不再放在 SubscribeCard 内（虚拟化卡片可能在弹窗打开期间被 unmount）。
+const editingSubscribe = ref<Subscribe | null>(null)
+const filesSubscribe = ref<Subscribe | null>(null)
+const sharingSubscribe = ref<Subscribe | null>(null)
+
+function onCardEdit(item: Subscribe) {
+  editingSubscribe.value = item
+}
+function onCardFiles(item: Subscribe) {
+  filesSubscribe.value = item
+}
+function onCardShare(item: Subscribe) {
+  sharingSubscribe.value = item
+}
+function onEditSave() {
+  editingSubscribe.value = null
+  fetchData()
+}
+function onEditRemove() {
+  editingSubscribe.value = null
+  fetchData()
+}
 
 // 订阅顺序配置
 const orderConfig = ref<{ id: number }[]>([])
@@ -413,12 +443,9 @@ onMounted(async () => {
   await loadSubscribeOrderConfig()
   await fetchData()
   if (props.subid) {
-    // 找到这个订阅
+    // URL 携带 subid → 自动打开对应订阅的编辑弹窗
     const sub = dataList.value.find(sub => sub.id.toString() == props.subid?.toString())
-    if (sub) {
-      // 打开编辑弹窗
-      sub.page_open = true
-    }
+    if (sub) editingSubscribe.value = sub
   }
 
   // 监听批量管理模式切换事件
@@ -527,6 +554,9 @@ defineExpose({
         @remove="fetchData"
         @save="fetchData"
         @select="toggleSelectSubscribe(element.id)"
+        @edit="onCardEdit(element)"
+        @files="onCardFiles(element)"
+        @share="onCardShare(element)"
       />
     </template>
   </draggable>
@@ -552,6 +582,9 @@ defineExpose({
         @remove="fetchData"
         @save="fetchData"
         @select="toggleSelectSubscribe(item.id)"
+        @edit="onCardEdit(item)"
+        @files="onCardFiles(item)"
+        @share="onCardShare(item)"
       />
     </template>
   </VirtualGrid>
@@ -568,5 +601,31 @@ defineExpose({
     :type="props.type"
     @close="historyDialog = false"
     @save="historyDone"
+  />
+
+  <!-- 从 SubscribeCard 提升上来的三个弹窗。挂在父组件，
+       不会被 VirtualGrid 的 mount/unmount 牵连销毁。 -->
+  <SubscribeEditDialog
+    v-if="editingSubscribe"
+    :model-value="true"
+    :subid="editingSubscribe.id"
+    @remove="onEditRemove"
+    @save="onEditSave"
+    @close="editingSubscribe = null"
+    @update:model-value="(v: boolean) => { if (!v) editingSubscribe = null }"
+  />
+  <SubscribeFilesDialog
+    v-if="filesSubscribe"
+    :model-value="true"
+    :subid="filesSubscribe.id"
+    @close="filesSubscribe = null"
+    @update:model-value="(v: boolean) => { if (!v) filesSubscribe = null }"
+  />
+  <SubscribeShareDialog
+    v-if="sharingSubscribe"
+    :model-value="true"
+    :sub="sharingSubscribe"
+    @close="sharingSubscribe = null"
+    @update:model-value="(v: boolean) => { if (!v) sharingSubscribe = null }"
   />
 </template>

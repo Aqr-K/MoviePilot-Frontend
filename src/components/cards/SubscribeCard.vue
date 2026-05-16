@@ -1,9 +1,12 @@
 <script lang="ts" setup>
 import { useToast } from 'vue-toastification'
 import { useConfirm } from '@/composables/useConfirm'
-import SubscribeEditDialog from '../dialog/SubscribeEditDialog.vue'
-import SubscribeFilesDialog from '../dialog/SubscribeFilesDialog.vue'
-import SubscribeShareDialog from '../dialog/SubscribeShareDialog.vue'
+// 注意：Edit/Files/Share 三个弹窗 **不再** 在卡片内部 mount —— 它们已被提升到
+// 列表父组件（SubscribeListView 等），脱离虚拟化卡片的生命周期。
+// 之所以这样改：Vuetify VDialog 打开时会给 html 加 v-overlay-scroll-blocked，
+// 让 body 变 position:fixed，触发 ResizeObserver → updateScrollMargin →
+// tanstack 重算可视区，可能把"刚被点击的卡片"虚拟化出 DOM，连带 v-if 弹窗一起销毁
+// （iOS 26 上 100% 复现）。提到顶层后弹窗实例与卡片生命周期解耦。
 import { formatDateDifference, formatSeason } from '@/@core/utils/formatters'
 import api from '@/api'
 import type { Subscribe } from '@/api/types'
@@ -41,7 +44,9 @@ const globalSettingsStore = useGlobalSettingsStore()
 const globalSettings = globalSettingsStore.globalSettings
 
 // 定义触发的自定义事件
-const emit = defineEmits(['remove', 'save', 'select'])
+// edit / files / share：通知父组件打开对应弹窗（弹窗实例在父级，避免被卡片
+// unmount 牵连销毁）
+const emit = defineEmits(['remove', 'save', 'select', 'edit', 'files', 'share'])
 
 // 确认框
 const createConfirm = useConfirm()
@@ -51,15 +56,6 @@ const $toast = useToast()
 
 // 图片是否加载完成
 const imageLoaded = ref(false)
-
-// 订阅弹窗
-const subscribeEditDialog = ref(false)
-
-// 订阅文件信息弹窗
-const subscribeFilesDialog = ref(false)
-
-// 分享订阅弹窗
-const subscribeShareDialog = ref(false)
 
 // 当前的订阅状态
 const subscribeState = ref<string>(props.media?.state ?? 'P')
@@ -174,14 +170,14 @@ async function resetSubscribe() {
   }
 }
 
-//  分享订阅
+//  分享订阅 —— 委托父组件打开弹窗
 async function shareSubscribe() {
-  subscribeShareDialog.value = true
+  emit('share')
 }
 
-// 编辑订阅响应
+// 编辑订阅响应 —— 委托父组件打开弹窗
 async function editSubscribeDialog() {
-  subscribeEditDialog.value = true
+  emit('edit')
 }
 
 // 获得mediaid
@@ -205,9 +201,9 @@ async function viewMediaDetail() {
   })
 }
 
-// 查看文件详情
+// 查看文件详情 —— 委托父组件打开弹窗
 async function viewSubscribeFiles() {
-  subscribeFilesDialog.value = true
+  emit('files')
 }
 
 // 弹出菜单
@@ -283,14 +279,8 @@ const dropdownItems = computed(() => [
   },
 ])
 
-// 监听插件窗口状态变化
-watch(
-  () => props.media?.page_open,
-  (newOpenState, _) => {
-    if (newOpenState) editSubscribeDialog()
-  },
-  { immediate: true },
-)
+// 注意：props.media.page_open 的响应已迁移到父组件
+// （父组件在 mount 时检测 page_open 并直接管理弹窗状态）
 
 // 监听订阅状态
 watch(
@@ -318,17 +308,7 @@ const posterUrl = computed(() => {
   return url
 })
 
-// 订阅编辑保存
-function onSubscribeEditSave() {
-  subscribeEditDialog.value = false
-  emit('save')
-}
-
-// 订阅编辑取消
-function onSubscribeEditRemove() {
-  subscribeEditDialog.value = false
-  emit('remove')
-}
+// 注意：订阅编辑保存/取消的回调已由父组件处理（父持有弹窗状态）
 
 // 处理卡片点击事件
 function handleCardClick() {
@@ -484,30 +464,8 @@ function handleCardClick() {
         </div>
       </template>
     </VHover>
-    <!-- 订阅编辑弹窗 -->
-    <SubscribeEditDialog
-      v-if="subscribeEditDialog"
-      v-model="subscribeEditDialog"
-      :subid="props.media?.id"
-      @remove="onSubscribeEditRemove"
-      @save="onSubscribeEditSave"
-      @close="subscribeEditDialog = false"
-    />
-
-    <!-- 订阅文件信息弹窗 -->
-    <SubscribeFilesDialog
-      v-if="subscribeFilesDialog"
-      v-model="subscribeFilesDialog"
-      :subid="props.media?.id"
-      @close="subscribeFilesDialog = false"
-    />
-    <!-- 分享订阅弹窗 -->
-    <SubscribeShareDialog
-      v-if="subscribeShareDialog"
-      v-model="subscribeShareDialog"
-      :sub="props.media"
-      @close="subscribeShareDialog = false"
-    />
+    <!-- 弹窗（Edit/Files/Share）已上移到父组件（如 SubscribeListView） -->
+    <!-- 卡片只通过 emit('edit'/'files'/'share') 通知，避免被虚拟化 unmount 牵连销毁 -->
   </div>
 </template>
 <style lang="scss" scoped>
