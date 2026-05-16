@@ -6,6 +6,7 @@ import VirtualGrid from '@/components/virtual/VirtualGrid.vue'
 import NoDataFound from '@/components/NoDataFound.vue'
 import { useBreakpointCols } from '@/composables/virtual/useBreakpointCols'
 import { useI18n } from 'vue-i18n'
+import { useWindowSize } from '@vueuse/core'
 
 const { t } = useI18n()
 
@@ -13,6 +14,18 @@ const { t } = useI18n()
 // xs:2 匹配 legacy `.grid-media-card { minmax(9rem, 1fr) }` 在 iPhone 上的视觉宽度，
 // 避免移动端卡片缩到 ~143px。
 const cols = useBreakpointCols({ xs: 2, sm: 4, md: 6, lg: 8, xl: 10, xxl: 12 })
+
+// 行高按"viewport - padding - gap × (cols-1)"算出每张卡片宽度，再乘 2:3 海报比。
+// 这个公式让 tanstack 的 measureElement 几乎不需要做修正 —— 不再因为
+// estimate 与实际偏差大而触发滚动期的 offset 跳变（即"向上滚动位置重置"）。
+const PAGE_PADDING_X = 24 // .pt-3.px-3 的左右 padding 合计
+const GRID_GAP = 16
+const POSTER_ASPECT = 1.5 // 2:3 海报
+const { width: viewportW } = useWindowSize()
+const rowEstimate = computed(() => {
+  const cardW = (viewportW.value - PAGE_PADDING_X - GRID_GAP * (cols.value - 1)) / cols.value
+  return Math.max(150, Math.round(cardW * POSTER_ASPECT))
+})
 
 // 输入参数
 const props = defineProps({
@@ -104,7 +117,7 @@ onMounted(() => {
     v-if="isRefreshed && dataList.length > 0"
     :items="dataList"
     :columns="cols"
-    :row-estimate-size="220"
+    :row-estimate-size="rowEstimate"
     :gap="16"
     :overscan="3"
     :get-item-key="(item, index) => item.tmdb_id || item.douban_id || item.bangumi_id || item.imdb_id || item.tvdb_id || item.media_id || item.title || index"

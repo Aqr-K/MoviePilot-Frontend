@@ -6,12 +6,25 @@ import NoDataFound from '@/components/NoDataFound.vue'
 import VirtualGrid from '@/components/virtual/VirtualGrid.vue'
 import { useBreakpointCols } from '@/composables/virtual/useBreakpointCols'
 import { useI18n } from 'vue-i18n'
+import { useWindowSize } from '@vueuse/core'
 
 // 国际化
 const { t } = useI18n()
 
 // 列数：按视口断点（路由级全宽页）
 const cols = useBreakpointCols({ xs: 2, sm: 4, md: 6, lg: 8, xl: 10, xxl: 12 })
+
+// 行高 = 卡片 2:3 海报高度 + popularity badge (~28px)。
+// 同步使 tanstack measureElement 几乎无需校正，消除上滑跳变。
+const PAGE_PADDING_X = 24 // pt-2.px-3 左右合计
+const GRID_GAP = 16
+const POSTER_ASPECT = 1.5
+const POPULARITY_BADGE_H = 28
+const { width: viewportW } = useWindowSize()
+const rowEstimate = computed(() => {
+  const cardW = (viewportW.value - PAGE_PADDING_X - GRID_GAP * (cols.value - 1)) / cols.value
+  return Math.max(180, Math.round(cardW * POSTER_ASPECT) + POPULARITY_BADGE_H)
+})
 
 // 输入参数
 const props = defineProps({
@@ -204,7 +217,7 @@ onMounted(() => {
     :key="currentKey"
     :items="dataList"
     :columns="cols"
-    :row-estimate-size="260"
+    :row-estimate-size="rowEstimate"
     :gap="16"
     :overscan="3"
     :get-item-key="(item, index) => item.tmdb_id || item.douban_id || item.bangumi_id || item.imdb_id || item.tvdb_id || item.media_id || item.title || index"
