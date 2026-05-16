@@ -631,17 +631,6 @@ onDeactivated(() => {
   />
 </template>
 <style scoped>
-.media-card {
-  /*
-    告诉浏览器：当本卡片远离视口时跳过 paint 和图片解码。
-    被跳过期间浏览器可以丢弃解码后的 bitmap（图片缓存大头）；
-    重新进入视口时按 contain-intrinsic-size 撑出位置后再 paint。
-    auto 关键字让首次 paint 后记忆实际尺寸，避免滚动条跳动。
-  */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 280px;
-}
-
 .media-card-title {
   font-size: 1.125rem;
   line-height: 1.25rem;
