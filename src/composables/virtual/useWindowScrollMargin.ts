@@ -50,6 +50,12 @@ export function useWindowScrollMargin(scrollEl: Ref<HTMLElement | null>, enabled
     }
     // 触摸期硬冻结：所有路径都不写 ref，避免 iOS 在 touch 主线程上重排 transform
     if (touchActive) return
+    // overlay 锁定期硬冻结：Vuetify 打开任何 VOverlay（VDialog/VMenu/VBottomSheet 等）
+    // 时会给 <html> 加 v-overlay-scroll-blocked 类并把 body 改成 position:fixed。
+    // 此时 body 几何处于人为变形状态（rect.top 被偏移到负值，scrollY=0），
+    // 测出来的 scrollMargin 是错的，写入会让 tanstack 把刚弹出弹窗的卡片虚拟化
+    // 出 DOM。等弹窗关闭后下一次 RO/scrollend 会自然校正回正确值。
+    if (document.documentElement.classList.contains('v-overlay-scroll-blocked')) return
     const next = scrollEl.value.getBoundingClientRect().top + window.scrollY
     if (Math.abs(next - scrollMargin.value) >= SCROLL_MARGIN_THRESHOLD) {
       scrollMargin.value = next
