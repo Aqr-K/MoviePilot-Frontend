@@ -299,7 +299,7 @@ onMounted(() => {
     v-model="nameTestDialog"
     max-width="45rem"
     scrollable
-    :fullscreen="!display.mdAndUp.value"
+    :fullscreen="!display.smAndUp.value"
   >
     <VCard>
       <VCardItem>
@@ -321,7 +321,7 @@ onMounted(() => {
     v-model="netTestDialog"
     max-width="35rem"
     scrollable
-    :fullscreen="!display.mdAndUp.value"
+    :fullscreen="!display.smAndUp.value"
   >
     <VCard>
       <VCardItem>
@@ -343,7 +343,7 @@ onMounted(() => {
       v-model="loggingDialog"
       scrollable
       max-width="80rem"
-      :fullscreen="!display.mdAndUp.value"
+      :fullscreen="!display.smAndUp.value"
     >
     <VCard>
       <VDialogCloseBtn @click="loggingDialog = false" />
@@ -371,7 +371,7 @@ onMounted(() => {
     v-model="ruleTestDialog"
     max-width="35rem"
     scrollable
-    :fullscreen="!display.mdAndUp.value"
+    :fullscreen="!display.smAndUp.value"
   >
     <VCard>
       <VCardItem>
@@ -388,7 +388,7 @@ onMounted(() => {
     </VCard>
   </VDialog>
   <!-- 词表设置弹窗 -->
-  <VDialog v-if="wordsDialog" v-model="wordsDialog" max-width="60rem" scrollable :fullscreen="!display.mdAndUp.value">
+  <VDialog v-if="wordsDialog" v-model="wordsDialog" max-width="60rem" scrollable :fullscreen="!display.smAndUp.value">
     <VCard>
       <VCardItem>
         <VCardTitle>
@@ -404,7 +404,7 @@ onMounted(() => {
     </VCard>
   </VDialog>
   <!-- 缓存管理弹窗 -->
-  <VDialog v-if="cacheDialog" v-model="cacheDialog" max-width="90rem" scrollable :fullscreen="!display.mdAndUp.value">
+  <VDialog v-if="cacheDialog" v-model="cacheDialog" max-width="90rem" scrollable :fullscreen="!display.smAndUp.value">
     <VCard>
       <VCardItem>
         <VCardTitle>
@@ -425,7 +425,7 @@ onMounted(() => {
     v-model="schedulerDialog"
     max-width="60rem"
     scrollable
-    :fullscreen="!display.mdAndUp.value"
+    :fullscreen="!display.smAndUp.value"
   >
     <VCard>
       <VCardItem class="py-2">
@@ -448,7 +448,7 @@ onMounted(() => {
     v-model="systemTestDialog"
     max-width="35rem"
     scrollable
-    :fullscreen="!display.mdAndUp.value"
+    :fullscreen="!display.smAndUp.value"
   >
     <VCard>
       <VCardItem>
@@ -470,7 +470,7 @@ onMounted(() => {
     v-model="messageDialog"
     max-width="50rem"
     scrollable
-    :fullscreen="!display.mdAndUp.value"
+    :fullscreen="!display.smAndUp.value"
     ref="messageDialogRef"
   >
     <VCard>

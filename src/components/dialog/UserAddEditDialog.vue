@@ -367,7 +367,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <VDialog scrollable max-width="40rem" :fullscreen="!display.mdAndUp.value">
+  <VDialog scrollable max-width="40rem" :fullscreen="!display.smAndUp.value">
     <VCard>
       <VCardItem :class="props.oper === 'add' ? 'py-3' : 'py-2'">
         <template #prepend>

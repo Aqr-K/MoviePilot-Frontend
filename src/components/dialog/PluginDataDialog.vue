@@ -124,7 +124,7 @@ onMounted(() => {
 })
 </script>
 <template>
-  <VDialog scrollable max-width="80rem" :fullscreen="!display.mdAndUp.value">
+  <VDialog scrollable max-width="80rem" :fullscreen="!display.smAndUp.value">
     <!-- Vuetify 渲染模式 -->
     <VCard v-if="renderMode === 'vuetify'" :title="`${props.plugin?.plugin_name}`">
       <VDialogCloseBtn @click="emit('close')" />

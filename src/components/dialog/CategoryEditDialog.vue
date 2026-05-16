@@ -356,7 +356,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <VDialog :model-value="modelValue" max-width="1000" scrollable :fullscreen="!display.mdAndUp.value">
+  <VDialog :model-value="modelValue" max-width="1000" scrollable :fullscreen="!display.smAndUp.value">
     <VCard>
       <VDialogCloseBtn @click="emit('close')" />
       <VCardItem class="py-3">

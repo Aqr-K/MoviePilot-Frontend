@@ -287,7 +287,7 @@ onBeforeMount(() => {
 </script>
 
 <template>
-  <VDialog scrollable eager max-width="80rem" :fullscreen="!display.mdAndUp.value">
+  <VDialog scrollable eager max-width="80rem" :fullscreen="!display.smAndUp.value">
     <VCard>
       <VCardItem>
         <VCardTitle>

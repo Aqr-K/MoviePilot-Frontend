@@ -118,7 +118,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <VDialog scrollable max-width="40rem" :fullscreen="!display.mdAndUp.value">
+  <VDialog scrollable max-width="40rem" :fullscreen="!display.smAndUp.value">
     <VCard>
       <VCardItem>
         <template #prepend>

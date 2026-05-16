@@ -300,7 +300,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <VDialog scrollable max-width="60rem" :fullscreen="!display.mdAndUp.value">
+  <VDialog scrollable max-width="60rem" :fullscreen="!display.smAndUp.value">
     <VCard class="mx-auto" width="100%">
       <VCardItem>
         <VCardTitle>{{ t('dialog.transferQueue.title') }}</VCardTitle>

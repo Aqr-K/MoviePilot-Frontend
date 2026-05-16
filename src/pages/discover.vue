@@ -221,7 +221,7 @@ onActivated(async () => {
       v-model="orderConfigDialog"
       max-width="35rem"
       scrollable
-      :fullscreen="!display.mdAndUp.value"
+      :fullscreen="!display.smAndUp.value"
     >
       <VCard>
         <VCardItem>

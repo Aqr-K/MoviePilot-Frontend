@@ -232,7 +232,7 @@ function onClose() {
       v-model="groupInfoDialog"
       scrollable
       max-width="80rem"
-      :fullscreen="!display.mdAndUp.value"
+      :fullscreen="!display.smAndUp.value"
     >
       <VCard :title="`${props.group.name} - ${t('filterRule.title')}`">
         <VDialogCloseBtn v-model="groupInfoDialog" />

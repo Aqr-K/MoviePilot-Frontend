@@ -524,7 +524,7 @@ onMounted(() => {
     :indeterminate="true"
   />
   <!-- 模板编辑器对话框 -->
-  <VDialog v-model="editorVisible" v-if="editorVisible" max-width="50rem" :fullscreen="!display.mdAndUp.value">
+  <VDialog v-model="editorVisible" v-if="editorVisible" max-width="50rem" :fullscreen="!display.smAndUp.value">
     <VCard>
       <VCardItem class="py-2">
         <template #prepend>

@@ -57,7 +57,7 @@ async function handleReset() {
 </script>
 
 <template>
-  <VDialog width="50rem" scrollable :fullscreen="!display.mdAndUp.value">
+  <VDialog width="50rem" scrollable :fullscreen="!display.smAndUp.value">
     <VCard>
       <VDialogCloseBtn @click="emit('close')" />
       <VCardItem>

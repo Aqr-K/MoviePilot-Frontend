@@ -395,7 +395,7 @@ const dropdownItems = ref([
       v-model="settingDialog"
       max-width="600"
       scrollable
-      :fullscreen="!display.mdAndUp.value"
+      :fullscreen="!display.smAndUp.value"
     >
       <VCard>
         <VDialogCloseBtn @click="settingDialog = false" />

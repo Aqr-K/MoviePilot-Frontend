@@ -578,7 +578,7 @@ watch(
     <ProgressDialog v-if="progressDialog" v-model="progressDialog" :text="progressText" />
 
     <!-- 更新日志 -->
-    <VDialog v-if="releaseDialog" v-model="releaseDialog" width="600" scrollable :fullscreen="!display.mdAndUp.value">
+    <VDialog v-if="releaseDialog" v-model="releaseDialog" width="600" scrollable :fullscreen="!display.smAndUp.value">
       <VCard :title="t('plugin.updateHistoryTitle', { name: props.plugin?.plugin_name })">
         <VDialogCloseBtn @click="releaseDialog = false" />
         <VDivider />
@@ -601,7 +601,7 @@ watch(
         v-model="loggingDialog"
         scrollable
         max-width="72rem"
-        :fullscreen="!display.mdAndUp.value"
+        :fullscreen="!display.smAndUp.value"
       >
       <VCard>
         <VDialogCloseBtn @click="loggingDialog = false" />
@@ -630,7 +630,7 @@ watch(
       v-model="pluginCloneDialog"
       width="600"
       scrollable
-      :fullscreen="!display.mdAndUp.value"
+      :fullscreen="!display.smAndUp.value"
     >
       <VCard>
         <VCardItem class="py-2">

@@ -230,7 +230,7 @@ onMounted(() => {
       v-model="mediaServerInfoDialog"
       scrollable
       max-width="40rem"
-      :fullscreen="!display.mdAndUp.value"
+      :fullscreen="!display.smAndUp.value"
     >
       <VCard>
         <VCardItem class="py-2">

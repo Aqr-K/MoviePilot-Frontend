@@ -123,7 +123,7 @@ function onClose() {
       v-model="ruleInfoDialog"
       scrollable
       max-width="40rem"
-      :fullscreen="!display.mdAndUp.value"
+      :fullscreen="!display.smAndUp.value"
     >
       <VCard>
         <VCardItem>

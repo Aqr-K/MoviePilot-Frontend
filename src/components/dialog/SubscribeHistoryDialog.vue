@@ -142,7 +142,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <VDialog scrollable max-width="50rem" :fullscreen="!display.mdAndUp.value">
+  <VDialog scrollable max-width="50rem" :fullscreen="!display.smAndUp.value">
     <VCard class="mx-auto" width="100%">
       <VCardItem>
         <VCardTitle>{{ t('dialog.subscribeHistory.title', { type: getMediaTypeText(props.type) }) }}</VCardTitle>

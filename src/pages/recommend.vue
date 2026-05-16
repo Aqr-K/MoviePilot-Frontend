@@ -300,7 +300,7 @@ onActivated(async () => {
     </div>
 
     <!-- 设置面板 -->
-    <VDialog v-model="dialog" width="35rem" class="settings-dialog" scrollable :fullscreen="!display.mdAndUp.value">
+    <VDialog v-model="dialog" width="35rem" class="settings-dialog" scrollable :fullscreen="!display.smAndUp.value">
       <VCard class="settings-card">
         <VCardItem class="settings-card-header">
           <VCardTitle>

@@ -778,7 +778,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <VDialog :scrollable="!previewVisible || !display.mdAndUp.value" :max-width="dialogMaxWidth" :fullscreen="!display.mdAndUp.value">
+  <VDialog :scrollable="!previewVisible || !display.mdAndUp.value" :max-width="dialogMaxWidth" :fullscreen="!display.smAndUp.value">
     <VCard class="reorganize-dialog-card" :class="{ 'reorganize-dialog-card--split': previewVisible && display.mdAndUp.value }">
       <VCardItem class="py-2">
         <template #prepend> <VIcon icon="mdi-folder-move" class="me-2" /> </template>

@@ -1766,7 +1766,7 @@ function onDragStartPlugin(evt: any) {
     scrollable
     max-width="40rem"
     :max-height="!display.mdAndUp.value ? '' : '85vh'"
-    :fullscreen="!display.mdAndUp.value"
+    :fullscreen="!display.smAndUp.value"
   >
     <VCard class="mx-auto" width="100%">
       <VToolbar flat class="p-0">

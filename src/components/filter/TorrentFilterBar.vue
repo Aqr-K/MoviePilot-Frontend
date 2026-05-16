@@ -525,7 +525,7 @@ onMounted(() => {
     max-width="50rem"
     location="center"
     scrollable
-    :fullscreen="!display.mdAndUp.value"
+    :fullscreen="!display.smAndUp.value"
   >
     <VCard>
       <VDialogCloseBtn @click="allFilterMenuOpen = false" />

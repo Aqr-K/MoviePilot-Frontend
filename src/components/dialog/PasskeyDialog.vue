@@ -210,7 +210,7 @@ watch(
 </script>
 
 <template>
-  <VDialog v-model="show" max-width="45rem" scrollable :fullscreen="!display.mdAndUp.value">
+  <VDialog v-model="show" max-width="45rem" scrollable :fullscreen="!display.smAndUp.value">
     <VCard>
       <VCardItem>
         <VCardTitle>

@@ -296,7 +296,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <VDialog scrollable max-width="45rem" :fullscreen="!display.mdAndUp.value">
+  <VDialog scrollable max-width="45rem" :fullscreen="!display.smAndUp.value">
     <VCard>
       <VCardItem class="py-2">
         <VDialogCloseBtn @click="emit('close')" />
