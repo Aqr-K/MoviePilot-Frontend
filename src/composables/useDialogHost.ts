@@ -1,86 +1,73 @@
-import { ref } from 'vue'
-import type { MediaInfo, MediaSeason, Site } from '@/api/types'
+import { ref, markRaw } from 'vue'
+import type { Component } from 'vue'
 
 /**
  * ============================================================
- * useDialogHost - 全局单例 Dialog 宿主
+ * useDialogHost - 全局通用 Dialog 注册表
  * ============================================================
  *
- * 目的：把 MediaCard 内部的 3 个弹窗（Season / Edit / SearchSite）从
- * 虚拟化卡片的生命周期里彻底剥离。任意 MediaCard 实例在弹窗显示期间被
- * VirtualGrid/VirtualList unmount 都不会再牵连销毁弹窗。
+ * 任意位置 useDialogHost().open(Component, props, on) 即可把一个弹窗挂到
+ * <DialogHost /> 上集中渲染。DialogHost 挂在 App.vue 根（<VApp> 内、
+ * <RouterView /> 同级），不随路由/虚拟化 unmount —— 触发方（卡片）即使被
+ * VirtualGrid/VirtualList 销毁，弹窗也不会随之销毁。
  *
- * 设计：
- *   - 模块级单例 ref（应用内任意位置 useDialogHost() 拿到同一份状态）
- *   - 真正的弹窗实例渲染在 <DialogHost /> 里，该组件挂在 App.vue 根
- *     （在 VApp 内，<RouterView /> 同级），与所有路由/虚拟化解耦
- *   - 消费方（MediaCard 等）只调用 openXxx(...)；不再持有 dialog 实例
+ * 为什么需要这个：
+ *   Vuetify VDialog/VBottomSheet 默认 scrollStrategy="block" 会给 <html>
+ *   加 v-overlay-scroll-blocked 类并把 body 置为 position:fixed。虚拟化容器
+ *   的 scrollMargin 测量会因此错乱，触发触发方卡片被虚拟化出 DOM —— 自持
+ *   弹窗会跟着 unmount。把弹窗实例从卡片生命周期里拎出来即可根治。
  *
- * 与 P2-SubscribeListView 提升模式的关系：
- *   - SubscribeListView 路径已经把 SubscribeEditDialog/Files/Share 提到了
- *     视图级（足以脱离 VirtualGrid 的影响），那里继续保留视图级宿主即可
- *   - 本文件主要服务 MediaCard：它出现在 MediaCardListView/SlideView/
- *     SubscribePopularView 三处不同的虚拟化容器里，逐个视图托管成本高，
- *     用根级宿主一劳永逸
+ * 用法：
+ *   const { open, close } = useDialogHost()
+ *   const id = open(SubscribeEditDialog, { subid }, {
+ *     save: () => { reload(); close(id) },
+ *     remove: () => { reload(); close(id) },
+ *     close: () => close(id),
+ *   })
+ *
+ * 自动关闭契约：
+ *   DialogHost 会把 :model-value="true" 直接挂到组件上，并劫持
+ *   @update:model-value —— 收到 false 自动调用 close(id)。消费方
+ *   不要在 on 里再传 'update:modelValue'，会被覆盖。
  */
 
-interface SeasonDialogState {
-  media: MediaInfo
-  onSubscribe: (
-    seasons: MediaSeason[],
-    seasonNoExists: { [key: number]: number },
-    groupId: string,
-  ) => void
+export interface DialogEntry {
+  id: string
+  component: Component
+  props?: Record<string, unknown>
+  // Vue 3 v-on 对象语法的事件名 → 处理函数；事件名用 camelCase（如 'updateModelValue'
+  // 由 Vue 自动归一化），自定义事件如 'subscribe' / 'save' / 'remove' / 'search' / 'close'
+  on?: Record<string, (...args: any[]) => void>
 }
 
-interface EditDialogState {
-  subid: number
-  onSave?: () => void
-  onRemove?: () => void
-}
-
-interface SiteDialogState {
-  sites: Site[]
-  selected: number[]
-  onSearch: (siteIds: number[]) => void
-}
-
-// 模块级单例 —— useDialogHost() 任意位置调用返回同一份引用
-const seasonDialog = ref<SeasonDialogState | null>(null)
-const editDialog = ref<EditDialogState | null>(null)
-const siteDialog = ref<SiteDialogState | null>(null)
+const dialogs = ref<DialogEntry[]>([])
+let nextId = 0
 
 export function useDialogHost() {
-  function openSeasonDialog(state: SeasonDialogState) {
-    seasonDialog.value = state
+  function open(
+    component: Component,
+    props?: Record<string, unknown>,
+    on?: Record<string, (...args: any[]) => void>,
+  ): string {
+    const id = `dlg-${++nextId}`
+    // markRaw —— 组件对象不需要 Vue 响应式追踪，否则会触发递归代理告警
+    dialogs.value.push({ id, component: markRaw(component) as Component, props, on })
+    return id
   }
-  function closeSeasonDialog() {
-    seasonDialog.value = null
+
+  function close(id: string) {
+    const i = dialogs.value.findIndex(d => d.id === id)
+    if (i >= 0) dialogs.value.splice(i, 1)
   }
-  function openEditDialog(state: EditDialogState) {
-    editDialog.value = state
-  }
-  function closeEditDialog() {
-    editDialog.value = null
-  }
-  function openSiteDialog(state: SiteDialogState) {
-    siteDialog.value = state
-  }
-  function closeSiteDialog() {
-    siteDialog.value = null
+
+  function closeAll() {
+    dialogs.value = []
   }
 
   return {
-    // 状态（只读访问交给 DialogHost.vue 即可）
-    seasonDialog,
-    editDialog,
-    siteDialog,
-    // 操作
-    openSeasonDialog,
-    closeSeasonDialog,
-    openEditDialog,
-    closeEditDialog,
-    openSiteDialog,
-    closeSiteDialog,
+    dialogs,
+    open,
+    close,
+    closeAll,
   }
 }

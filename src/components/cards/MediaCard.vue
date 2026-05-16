@@ -26,6 +26,9 @@ import {
 } from '@/utils/mediaStatusCache'
 import { useSharedObserver } from '@/composables/useSharedObserver'
 import { useDialogHost } from '@/composables/useDialogHost'
+import SubscribeSeasonDialog from '@/components/dialog/SubscribeSeasonDialog.vue'
+import SubscribeEditDialog from '@/components/dialog/SubscribeEditDialog.vue'
+import SearchSiteDialog from '@/components/dialog/SearchSiteDialog.vue'
 
 // 国际化
 const { t } = useI18n()
@@ -66,7 +69,7 @@ const isSubscribed = ref(false)
 const isExists = ref(false)
 
 // 弹窗状态全部委托给根级 <DialogHost />（详见文件头 import 处注释）
-const { openSeasonDialog, openEditDialog, openSiteDialog } = useDialogHost()
+const { open: openDialog, close: closeDialog } = useDialogHost()
 
 // 选中的订阅季 —— 保留，仍用于 addSubscribe 的"单季才弹编辑"判断
 const seasonsSelected = ref<MediaSeason[]>([])
@@ -156,20 +159,25 @@ async function handleAddSubscribe() {
     // 弹出季选择列表（由根级 DialogHost 渲染）
     seasonsSelected.value = []
     if (!props.media) return
-    openSeasonDialog({
-      media: props.media,
-      onSubscribe(seasons, seasonNoExists, groupId) {
-        episodeGroup.value = groupId
-        seasonsSelected.value = seasons || []
-        seasonsSelected.value.forEach(season => {
-          let best_version = 0
-          if (season && props.media?.tmdb_id)
-            // 全部存在时洗版
-            best_version = !seasonNoExists[season.season_number || 0] ? 1 : 0
-          addSubscribe(season.season_number ?? null, best_version)
-        })
+    const seasonId = openDialog(
+      SubscribeSeasonDialog,
+      { media: props.media },
+      {
+        subscribe(seasons: any[], seasonNoExists: Record<number, number>, groupId: string) {
+          episodeGroup.value = groupId
+          seasonsSelected.value = seasons || []
+          seasonsSelected.value.forEach(season => {
+            let best_version = 0
+            if (season && props.media?.tmdb_id)
+              // 全部存在时洗版
+              best_version = !seasonNoExists[season.season_number || 0] ? 1 : 0
+            addSubscribe(season.season_number ?? null, best_version)
+          })
+          closeDialog(seasonId)
+        },
+        close: () => closeDialog(seasonId),
       },
-    })
+    )
   } else {
     // 电影
     addSubscribe()
@@ -211,11 +219,16 @@ async function addSubscribe(season: number | null = null, best_version: number =
     if (result.success && seasonsSelected.value.length <= 1) {
       const show_edit_dialog = await queryDefaultSubscribeConfig()
       if (show_edit_dialog) {
-        openEditDialog({
-          subid: result.data.id,
-          // onRemove/onSave 无需特殊清理：DialogHost 关闭即完成；
-          // 若以后需要刷新本卡状态，可在此追加回调
-        })
+        const editId = openDialog(
+          SubscribeEditDialog,
+          { subid: result.data.id },
+          {
+            // DialogHost 已接管 close-on-dismiss；这里只需在 save/remove 时收尾
+            save: () => closeDialog(editId),
+            remove: () => closeDialog(editId),
+            close: () => closeDialog(editId),
+          },
+        )
       }
     }
   } catch (error) {
@@ -347,7 +360,7 @@ function handleSubscribe() {
   else handleAddSubscribe()
 }
 
-// 订阅多季的逻辑已并入 handleAddSubscribe 的 openSeasonDialog onSubscribe 回调
+// 订阅多季的逻辑已并入 handleAddSubscribe 的 SubscribeSeasonDialog subscribe 回调
 
 // 打开详情页
 function goMediaDetail(isHovering = false) {
@@ -383,14 +396,18 @@ async function clickSearch() {
   }
   if (allSites.value?.length > 0) {
     // 站点选择弹窗由根级 DialogHost 渲染
-    openSiteDialog({
-      sites: allSites.value,
-      selected: selectedSites.value,
-      onSearch(siteIds: number[]) {
-        selectedSites.value = siteIds
-        handleSearch()
+    const siteId = openDialog(
+      SearchSiteDialog,
+      { sites: allSites.value, selected: selectedSites.value },
+      {
+        search(siteIds: number[]) {
+          selectedSites.value = siteIds
+          handleSearch()
+          closeDialog(siteId)
+        },
+        close: () => closeDialog(siteId),
       },
-    })
+    )
   } else {
     handleSearch()
   }
@@ -412,7 +429,7 @@ function handleSearch() {
   })
 }
 
-// 多站点搜索的逻辑已并入 clickSearch 的 openSiteDialog onSearch 回调
+// 多站点搜索的逻辑已并入 clickSearch 的 SearchSiteDialog search 回调
 
 // 懒加载检查
 function handleCheckLazy() {
