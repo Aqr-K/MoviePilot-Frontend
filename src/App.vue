@@ -11,6 +11,7 @@ import { preloadImage } from './@core/utils/image'
 import { globalLoadingStateManager } from '@/utils/loadingStateManager'
 import { addBackgroundTimer, removeBackgroundTimer } from '@/utils/backgroundManager'
 import PWAInstallPrompt from '@/components/PWAInstallPrompt.vue'
+import DialogHost from '@/components/DialogHost.vue'
 import { themeManager } from '@/utils/themeManager'
 import { configureApexChartsTheme } from '@/utils/apexCharts'
 
@@ -369,6 +370,9 @@ onUnmounted(() => {
       <RouterView />
       <!-- PWA安装提示 -->
       <PWAInstallPrompt />
+      <!-- 全局 Dialog 宿主：MediaCard 的 3 个弹窗在此渲染，
+           不随路由/虚拟化 unmount 而销毁。详见 composables/useDialogHost.ts -->
+      <DialogHost />
     </VApp>
   </div>
 </template>
