@@ -11,14 +11,21 @@ import { ref, onMounted, onBeforeUnmount, type Ref } from 'vue'
  *
  * 何时会变陈旧 —— 列表【上方】的内容高度变化（折叠面板展开、异步内容撑高等），
  * 会把列表整体往下推，scrollMargin 必须随之更新，否则虚拟项渲染位置整体偏移
- * （出现空隙或重叠）。三道防线覆盖：
+ * （出现空隙或重叠）。四道防线覆盖：
  *   1. window resize          —— 视口尺寸变化
  *   2. body ResizeObserver    —— body 盒子自身变化（内容驱动高度的布局下，
  *                                上方内容撑高会让 body 长高 → 触发）
- *   3. window scroll（rAF 节流）—— 自愈兜底：当布局是 `html,body{height:100%}`、
- *      滚动发生在 <html> 上时，上方内容撑高【不会】改变 body 盒子 → RO 不触发，
- *      此时靠下一次 scroll 重算自愈。正常滚动时 rect.top+scrollY 恒定（写回同值
- *      不触发响应式），只有真发生上方位移才会写入新值，故几乎零成本、无抖动。
+ *   3. scrollend（首选）       —— 滚动停止时一次性自愈；Safari 18+ / Chrome 114+
+ *                                原生支持，浏览器已经做了 debounce，无需 rAF
+ *   4. scroll（fallback）      —— 仅当 scrollend 不可用时启用，rAF 节流写
+ *
+ * iOS 兼容硬化（防 click 落空 + URL bar 抖动）：
+ *   - 触摸期（touchstart → touchend）冻结所有 scrollMargin 写入。
+ *     iOS Safari 把 transform 重排塞进 touch 主线程，会让卡片在 touchstart →
+ *     click 之间漂移，导致点击落点指向旧节点。冻结期间所有 RO / scroll /
+ *     scrollend 触发都被忽略，touchend 后再一次性 rAF 补齐。
+ *   - 2px 阈值过滤亚像素噪声（iOS URL bar 折叠/展开期间的 rect.top 抖动通常
+ *     <2px；真实上方面板撑高 ≥24px，绝不会被吞掉）。
  *
  * 残留边角：上方面板展开且用户【不滚动】、同时布局又非内容驱动高度 —— 此时
  * 需要消费方在已知的 toggle 时机主动调用返回的 updateScrollMargin() 即可消除。
@@ -30,28 +37,48 @@ export function useWindowScrollMargin(scrollEl: Ref<HTMLElement | null>, enabled
   const scrollMargin = ref(0)
   let resizeObserver: ResizeObserver | null = null
   let rafId: number | null = null
+  let touchActive = false
 
-  // iOS Safari URL bar 折叠/展开期间，rect.top + scrollY 会出现亚像素~1px 级抖动。
-  // 直接写回响应式 ref 会触发所有 virtual 项 transform 重排 → 视觉抖动、
-  // 触摸期 click 落空（卡片在 touchstart→touchend 之间被平移）。
-  // 加 2px 阈值过滤噪声：真实"上方面板撑高"通常 ≥ 24px，绝不会被吞掉；
-  // 而 iOS URL bar 抖动通常 < 2px，被静音。
   const SCROLL_MARGIN_THRESHOLD = 2
+  // Safari 18+ / Chrome 114+ 原生支持 scrollend；不支持时回退到 rAF scroll
+  const supportsScrollEnd = typeof window !== 'undefined' && 'onscrollend' in window
 
   function updateScrollMargin() {
     if (!enabled() || !scrollEl.value || typeof window === 'undefined') {
       if (scrollMargin.value !== 0) scrollMargin.value = 0
       return
     }
+    // 触摸期硬冻结：所有路径都不写 ref，避免 iOS 在 touch 主线程上重排 transform
+    if (touchActive) return
     const next = scrollEl.value.getBoundingClientRect().top + window.scrollY
     if (Math.abs(next - scrollMargin.value) >= SCROLL_MARGIN_THRESHOLD) {
       scrollMargin.value = next
     }
   }
 
-  // scroll 自愈：rAF 节流，避免占用滚动热路径。
+  // scrollend 已被浏览器 debounce，无需 rAF 节流
+  function onScrollEnd() {
+    updateScrollMargin()
+  }
+
+  // fallback：scroll + rAF（与原版行为一致，但接受 touch 冻结）
   function onScroll() {
     if (rafId !== null) return
+    rafId = requestAnimationFrame(() => {
+      rafId = null
+      updateScrollMargin()
+    })
+  }
+
+  function onTouchStart() {
+    touchActive = true
+  }
+
+  function onTouchEnd() {
+    touchActive = false
+    // 抬指后立即补一帧 —— 把触摸期内累积的 above-list 变化一次性同步到 ref。
+    // 用 rAF 让 iOS 完成 touch → click 派发，再写 ref，避免末刻还在抢主线程。
+    if (rafId !== null) cancelAnimationFrame(rafId)
     rafId = requestAnimationFrame(() => {
       rafId = null
       updateScrollMargin()
@@ -62,7 +89,15 @@ export function useWindowScrollMargin(scrollEl: Ref<HTMLElement | null>, enabled
     updateScrollMargin()
     if (enabled() && typeof window !== 'undefined') {
       window.addEventListener('resize', updateScrollMargin, { passive: true })
-      window.addEventListener('scroll', onScroll, { passive: true })
+      if (supportsScrollEnd) {
+        window.addEventListener('scrollend', onScrollEnd, { passive: true })
+      } else {
+        window.addEventListener('scroll', onScroll, { passive: true })
+      }
+      // touch 监听只在触摸设备有意义；非触摸设备不会触发，零成本
+      window.addEventListener('touchstart', onTouchStart, { passive: true })
+      window.addEventListener('touchend', onTouchEnd, { passive: true })
+      window.addEventListener('touchcancel', onTouchEnd, { passive: true })
       resizeObserver = new ResizeObserver(updateScrollMargin)
       if (document.body) resizeObserver.observe(document.body)
     }
@@ -71,7 +106,14 @@ export function useWindowScrollMargin(scrollEl: Ref<HTMLElement | null>, enabled
   onBeforeUnmount(() => {
     if (typeof window !== 'undefined') {
       window.removeEventListener('resize', updateScrollMargin)
-      window.removeEventListener('scroll', onScroll)
+      if (supportsScrollEnd) {
+        window.removeEventListener('scrollend', onScrollEnd)
+      } else {
+        window.removeEventListener('scroll', onScroll)
+      }
+      window.removeEventListener('touchstart', onTouchStart)
+      window.removeEventListener('touchend', onTouchEnd)
+      window.removeEventListener('touchcancel', onTouchEnd)
     }
     if (rafId !== null) {
       cancelAnimationFrame(rafId)
