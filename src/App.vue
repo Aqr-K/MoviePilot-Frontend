@@ -370,8 +370,7 @@ onUnmounted(() => {
       <RouterView />
       <!-- PWA安装提示 -->
       <PWAInstallPrompt />
-      <!-- 全局 Dialog 宿主：MediaCard 的 3 个弹窗在此渲染，
-           不随路由/虚拟化 unmount 而销毁。详见 composables/useDialogHost.ts -->
+      <!-- 全局 Dialog 宿主 -->
       <DialogHost />
     </VApp>
   </div>

@@ -9,12 +9,6 @@ import { doneNProgress, startNProgress } from '@/api/nprogress'
 import type { MediaInfo, Subscribe, MediaSeason, Site } from '@/api/types'
 import router from '@/router'
 import { useUserStore, useGlobalSettingsStore } from '@/stores'
-// SubscribeEditDialog / SearchSiteDialog / SubscribeSeasonDialog 三个弹窗
-// 不再在 MediaCard 内部 mount。它们已上移到根级 <DialogHost /> 渲染
-// （App.vue），由 useDialogHost 单例驱动。原因：MediaCard 出现在多种虚拟化
-// 容器内（VirtualGrid / VirtualList of SlideView），任一容器在弹窗打开期间
-// 把卡片 unmount 都会牵连销毁弹窗（iOS 26 上电视剧点击爱心无法弹季选 = 此 bug）。
-// useDialogHost 让弹窗实例与卡片生命周期完全解耦。
 import { useI18n } from 'vue-i18n'
 import { mediaTypeDict } from '@/api/constants'
 import { hasPermission } from '@/utils/permission'
@@ -68,10 +62,9 @@ const isSubscribed = ref(false)
 // 本地存在状态
 const isExists = ref(false)
 
-// 弹窗状态全部委托给根级 <DialogHost />（详见文件头 import 处注释）
 const { open: openDialog, close: closeDialog } = useDialogHost()
 
-// 选中的订阅季 —— 保留，仍用于 addSubscribe 的"单季才弹编辑"判断
+// 选中的订阅季
 const seasonsSelected = ref<MediaSeason[]>([])
 
 // 来源角标字典
@@ -156,7 +149,7 @@ function getChipColor(type: string) {
 // 添加订阅处理
 async function handleAddSubscribe() {
   if (props.media?.type === '电视剧') {
-    // 弹出季选择列表（由根级 DialogHost 渲染）
+    // 弹出季选择列表
     seasonsSelected.value = []
     if (!props.media) return
     const seasonId = openDialog(
@@ -215,7 +208,7 @@ async function addSubscribe(season: number | null = null, best_version: number =
     // 提示
     showSubscribeAddToast(result.success, props.media?.title ?? '', season, result.message, best_version)
 
-    // 弹出订阅编辑弹窗（由根级 DialogHost 渲染）
+    // 弹出订阅编辑弹窗
     if (result.success && seasonsSelected.value.length <= 1) {
       const show_edit_dialog = await queryDefaultSubscribeConfig()
       if (show_edit_dialog) {
@@ -223,7 +216,6 @@ async function addSubscribe(season: number | null = null, best_version: number =
           SubscribeEditDialog,
           { subid: result.data.id },
           {
-            // DialogHost 已接管 close-on-dismiss；这里只需在 save/remove 时收尾
             save: () => closeDialog(editId),
             remove: () => closeDialog(editId),
             close: () => closeDialog(editId),
@@ -360,8 +352,6 @@ function handleSubscribe() {
   else handleAddSubscribe()
 }
 
-// 订阅多季的逻辑已并入 handleAddSubscribe 的 SubscribeSeasonDialog subscribe 回调
-
 // 打开详情页
 function goMediaDetail(isHovering = false) {
   if (isHovering) {
@@ -395,7 +385,7 @@ async function clickSearch() {
     await querySelectedSites()
   }
   if (allSites.value?.length > 0) {
-    // 站点选择弹窗由根级 DialogHost 渲染
+    // 站点选择弹窗
     const siteId = openDialog(
       SearchSiteDialog,
       { sites: allSites.value, selected: selectedSites.value },
@@ -428,8 +418,6 @@ function handleSearch() {
     },
   })
 }
-
-// 多站点搜索的逻辑已并入 clickSearch 的 SearchSiteDialog search 回调
 
 // 懒加载检查
 function handleCheckLazy() {
@@ -483,8 +471,6 @@ const getLqipUrl: Ref<string> = computed(() => {
   if (lqip === path) return ''
   return wrapPosterUrl(lqip)
 })
-
-// onRemoveSubscribe 不再需要：弹窗由 DialogHost 自管理关闭
 
 // 获取媒体类型文本
 function getMediaTypeText(type: string | undefined) {
@@ -603,8 +589,6 @@ onMounted(() => {
       </div>
     </template>
   </VHover>
-  <!-- Season / Edit / SearchSite 三个弹窗均由根级 <DialogHost /> 渲染（App.vue 内），
-       不再随 MediaCard 卸载而销毁。详见 composables/useDialogHost.ts -->
 </template>
 <style scoped>
 .media-card-title {
