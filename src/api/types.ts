@@ -268,6 +268,66 @@ export interface TransferHistory {
   src_fileitem?: FileItem
 }
 
+// 下载历史记录
+export interface DownloadHistory {
+  // ID
+  id: number
+  // 保存路径
+  path?: string
+  // 类型：电影、电视剧
+  type?: string
+  // 标题
+  title?: string
+  // 年份
+  year?: string
+  // TMDB ID
+  tmdbid?: number
+  // IMDB ID
+  imdbid?: string
+  // TVDB ID
+  tvdbid?: number
+  // 豆瓣 ID
+  doubanid?: string
+  // Bangumi ID
+  bangumiid?: number
+  // AniList ID
+  anilistid?: number
+  // 媒体数据源
+  media_source?: MediaDataSource
+  // 数据源原生 ID
+  media_id?: string
+  // 季 Sxx
+  seasons?: string
+  // 集 Exx
+  episodes?: string
+  // 背景图
+  image?: string
+  // 海报
+  poster?: string
+  // 下载器 Hash
+  download_hash?: string
+  // 种子名称
+  torrent_name?: string
+  // 种子描述
+  torrent_description?: string
+  // 站点
+  torrent_site?: string
+  // 下载用户 ID
+  userid?: string
+  // 下载用户名或插件名
+  username?: string
+  // 下载渠道
+  channel?: string
+  // 创建时间
+  date?: string
+  // 附加信息
+  note?: unknown
+  // 自定义媒体类别
+  media_category?: string
+  // 自定义剧集组
+  episode_group?: string
+}
+
 // 媒体信息
 export interface MediaInfo {
   // 来源：themoviedb、douban、bangumi、anilist
@@ -1022,6 +1082,11 @@ export interface User {
   settings: { [key: string]: string | null }
   // 昵称
   nickname?: string
+}
+
+// 头像上传响应数据
+export interface AvatarUploadData {
+  filename: string
 }
 
 // 通行密钥
@@ -1829,9 +1894,7 @@ export interface RecognitionCacheItem {
   key: string
   // TMDB ID，0 表示未识别
   tmdb_id?: number
-  // 豆瓣 ID，0 表示未识别
-  douban_id?: string | number
-  // 当前识别数据源对应的统一 ID
+  // 识别缓存对应的字符串 ID
   recognition_id?: string
   // 识别后的标题
   title: string

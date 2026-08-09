@@ -81,11 +81,13 @@ function closeDialog() {
         <VTextField
           v-model="searchKeyword"
           :label="t('plugin.searchPlugins')"
+          :mobile-layout="false"
           single-line
           :placeholder="t('plugin.searchPlaceholder')"
           variant="solo"
           prepend-inner-icon="mdi-magnify"
           flat
+          autofocus
           class="mx-1"
         />
       </VToolbar>

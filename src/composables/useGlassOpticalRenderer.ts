@@ -45,7 +45,21 @@ import {
   type GlassOpticalSurfaceMode,
   type GlassOpticalSurfaceSlot,
 } from '@/utils/glassOptics'
-import type { ThemeCustomizerGlassAppearance } from '@/composables/useThemeCustomizer'
+import type { ThemeCustomizerGlassAppearance, ThemeCustomizerGlassDynamicsMode } from '@/composables/useThemeCustomizer'
+import {
+  createGlassRippleDynamics,
+  type GlassRippleDynamics,
+  type GlassRippleQuality,
+} from '@/rendering/glass/glassRippleDynamics'
+import {
+  createGlassFluidDynamics,
+  GLASS_FLUID_FRAGMENT_SETUP,
+  GLASS_FLUID_FRAGMENT_SURFACE_OPTICS,
+  GLASS_FLUID_FRAGMENT_SURFACE_REFRACTION,
+  GLASS_FLUID_FRAGMENT_SURFACE_SHAPE,
+  GLASS_FLUID_FRAGMENT_TRAIL_AND_FIELD,
+  type GlassFluidDynamics,
+} from '@/rendering/glass/glassFluidDynamics'
 import type { PagePresentationMotionReader } from '@/composables/usePagePresentationMotion'
 import { APP_ACTIVITY_SUSPEND_DELAY_MS } from '@/utils/appActivityLifecycle'
 import {
@@ -150,7 +164,9 @@ export function setGlassRendererState(state: Ref<GlassRendererState>, value: Gla
 }
 
 /** 为有界的多个呈现 context 建立唯一的全局指针与触摸事件源。 */
-export function useGlassOpticalInteractionSource(): GlassOpticalInteractionSource {
+export function useGlassOpticalInteractionSource(
+  active: MaybeRefOrGetter<boolean> = true,
+): GlassOpticalInteractionSource {
   const listeners: Record<GlassPresentationSpace, Set<(event: PointerEvent | TouchEvent) => void>> = {
     fixed: new Set(),
     scroll: new Set(),
@@ -197,6 +213,13 @@ export function useGlassOpticalInteractionSource(): GlassOpticalInteractionSourc
     event.type.startsWith('touch')
 
   const dispatch = (event: PointerEvent | TouchEvent) => {
+    if (!toValue(active)) {
+      if (isTouchInteractionEvent(event) && (event.type === 'touchend' || event.type === 'touchcancel')) {
+        for (const touch of Array.from(event.changedTouches)) touchOwners.delete(touch.identifier)
+      }
+      return
+    }
+
     const owner = isTouchInteractionEvent(event)
       ? resolveTouchOwner(event)
       : resolvePointOwner(event.clientX, event.clientY)
@@ -208,21 +231,44 @@ export function useGlassOpticalInteractionSource(): GlassOpticalInteractionSourc
     }
   }
 
-  window.addEventListener('pointermove', dispatch, { passive: true })
-  window.addEventListener('touchstart', dispatch, { passive: true })
-  window.addEventListener('touchmove', dispatch, { passive: true })
-  window.addEventListener('touchend', dispatch, { passive: true })
-  window.addEventListener('touchcancel', dispatch, { passive: true })
+  let listening = false
 
-  onScopeDispose(() => {
-    listeners.fixed.clear()
-    listeners.scroll.clear()
+  function attachGlobalListeners() {
+    if (listening) return
+
+    listening = true
+    window.addEventListener('pointermove', dispatch, { passive: true })
+    window.addEventListener('touchstart', dispatch, { passive: true })
+    window.addEventListener('touchmove', dispatch, { passive: true })
+    window.addEventListener('touchend', dispatch, { passive: true })
+    window.addEventListener('touchcancel', dispatch, { passive: true })
+  }
+
+  function detachGlobalListeners() {
+    if (!listening) return
+
+    listening = false
     touchOwners.clear()
     window.removeEventListener('pointermove', dispatch)
     window.removeEventListener('touchstart', dispatch)
     window.removeEventListener('touchmove', dispatch)
     window.removeEventListener('touchend', dispatch)
     window.removeEventListener('touchcancel', dispatch)
+  }
+
+  watch(
+    () => toValue(active),
+    enabled => {
+      if (enabled) attachGlobalListeners()
+      else detachGlobalListeners()
+    },
+    { flush: 'sync', immediate: true },
+  )
+
+  onScopeDispose(() => {
+    listeners.fixed.clear()
+    listeners.scroll.clear()
+    detachGlobalListeners()
   })
 
   return {
@@ -240,6 +286,7 @@ interface GlassRendererUniforms extends Record<string, IUniform> {
   uCoverScale: IUniform<Vector2>
   uDeformationStrength: IUniform<number>
   uDynamicsOnly: IUniform<number>
+  uDynamicsMode: IUniform<number>
   uFlowTexture: IUniform<Texture | null>
   uFlowStrength: IUniform<number>
   uHasWallpaperTexture: IUniform<number>
@@ -258,6 +305,10 @@ interface GlassRendererUniforms extends Record<string, IUniform> {
   uPreviousWallpaperExposure: IUniform<number>
   uQuality: IUniform<number>
   uReflectionStrength: IUniform<number>
+  uRippleDeformationStrength: IUniform<number>
+  uRippleTexelSize: IUniform<Vector2>
+  uRippleTexture: IUniform<Texture | null>
+  uHasRippleTexture: IUniform<number>
   uRadii: IUniform<Vector4[]>
   uRectCount: IUniform<number>
   uRects: IUniform<Vector4[]>
@@ -282,16 +333,6 @@ interface GlassRendererUniforms extends Record<string, IUniform> {
   uWakeDirection: IUniform<Vector2>
 }
 
-interface GlassFlowUniforms extends Record<string, IUniform> {
-  uDecay: IUniform<number>
-  uInjection: IUniform<number>
-  uPointer: IUniform<Vector2>
-  uPrevious: IUniform<Texture | null>
-  uTexelSize: IUniform<Vector2>
-  uVelocity: IUniform<Vector2>
-  uViewportAspect: IUniform<number>
-}
-
 interface GlassRendererResources {
   camera: OrthographicCamera
   geometry: BufferGeometry
@@ -300,15 +341,6 @@ interface GlassRendererResources {
   renderer: WebGLRenderer
   scene: Scene
   uniforms: GlassRendererUniforms
-}
-
-interface GlassFlowResources {
-  material: ShaderMaterial
-  mesh: Mesh
-  readTarget: WebGLRenderTarget
-  scene: Scene
-  uniforms: GlassFlowUniforms
-  writeTarget: WebGLRenderTarget
 }
 
 interface GlassFrostPrefilterResources {
@@ -327,6 +359,10 @@ interface UseGlassOpticalRendererOptions {
   appearance: MaybeRefOrGetter<ThemeCustomizerGlassAppearance>
   canvas: Ref<HTMLCanvasElement | null>
   deformationStrength?: MaybeRefOrGetter<number>
+  /** 是否启用交互形变、尾迹和 temporal flow；静态材质不受影响。 */
+  dynamicsActive?: MaybeRefOrGetter<boolean>
+  /** 当前互斥动态策略；运行时降级由 dynamicsActive 统一门控。 */
+  dynamicsMode?: MaybeRefOrGetter<ThemeCustomizerGlassDynamicsMode>
   flowStrength?: MaybeRefOrGetter<number>
   interactionSource?: GlassOpticalInteractionSource
   /** 旧调用方的单一动态强度仅作为三个独立维度的兼容回退。 */
@@ -405,6 +441,7 @@ const SURFACE_SELECTORS = [
 ] as const
 const SURFACE_SELECTOR_QUERY = SURFACE_SELECTORS.map(({ selector }) => selector).join(',')
 const INTERACTION_CLIP_SELECTOR = '.app-hover-lift-card'
+const OPTICAL_BOUNDARY_SELECTOR = '[data-glass-optical-boundary]'
 const INTERACTION_CLIP_OVERSCAN_PX = 96
 
 /** 登录卡片随文档弹性合成，其余固定表面继续使用 viewport 坐标。 */
@@ -429,48 +466,6 @@ varying vec2 vUv;
 void main() {
   vUv = position.xy * 0.5 + 0.5;
   gl_Position = vec4(position.xy, 0.0, 1.0);
-}
-`
-
-const DYNAMIC_RANGE_SCALE = 0.4
-const DYNAMIC_RANGE_DENSITY = 1 / DYNAMIC_RANGE_SCALE ** 2
-
-const FLOW_FRAGMENT_SHADER = `
-precision highp float;
-
-uniform sampler2D uPrevious;
-uniform vec2 uPointer;
-uniform vec2 uVelocity;
-uniform vec2 uTexelSize;
-uniform float uInjection;
-uniform float uDecay;
-uniform float uViewportAspect;
-varying vec2 vUv;
-
-void main() {
-  vec4 previous = (
-    texture2D(uPrevious, vUv) * 0.5 +
-    texture2D(uPrevious, vUv + vec2(uTexelSize.x, 0.0)) * 0.125 +
-    texture2D(uPrevious, vUv - vec2(uTexelSize.x, 0.0)) * 0.125 +
-    texture2D(uPrevious, vUv + vec2(0.0, uTexelSize.y)) * 0.125 +
-    texture2D(uPrevious, vUv - vec2(0.0, uTexelSize.y)) * 0.125
-  );
-  float previousEnergy = previous.z;
-  vec2 flow = previousEnergy < 0.001 ? vec2(0.0) : (previous.xy * 2.0 - 1.0) * uDecay;
-  float energy = previousEnergy * uDecay;
-  vec2 delta = vUv - uPointer;
-  delta.x *= uViewportAspect;
-  float distanceSquared = dot(delta, delta);
-  float injection = exp(-distanceSquared * ${(70 * DYNAMIC_RANGE_DENSITY).toFixed(3)}) * uInjection;
-  float speed = length(uVelocity);
-  vec2 direction = speed > 0.0001 ? uVelocity / speed : vec2(0.0, -1.0);
-  vec2 perpendicular = vec2(-direction.y, direction.x);
-  float shear = dot(delta, perpendicular) * exp(-distanceSquared * ${(42 * DYNAMIC_RANGE_DENSITY).toFixed(3)});
-
-  flow += (direction * min(speed * 9.0, 0.9) - perpendicular * shear * 0.85) * injection * 0.44;
-  energy = max(energy, injection);
-
-  gl_FragColor = vec4(flow * 0.5 + 0.5, energy, 1.0);
 }
 `
 
@@ -536,10 +531,12 @@ uniform vec2 uScrollOffset;
 uniform vec2 uVisibleViewportSize;
 uniform float uDeformationStrength;
 uniform float uDynamicsOnly;
+uniform float uDynamicsMode;
 uniform float uFlowStrength;
 uniform float uHasWallpaperTexture;
 uniform float uHasFlowTexture;
 uniform float uHasFrostedTexture;
+uniform float uHasRippleTexture;
 uniform vec4 uInteractionRadii[8];
 uniform vec4 uInteractionRects[8];
 uniform int uInteractionRectCount;
@@ -551,6 +548,9 @@ uniform vec2 uPointerVelocity;
 uniform vec2 uWakeDirection;
 uniform float uQuality;
 uniform float uReflectionStrength;
+uniform float uRippleDeformationStrength;
+uniform vec2 uRippleTexelSize;
+uniform sampler2D uRippleTexture;
 uniform vec4 uRects[8];
 uniform vec4 uRadii[8];
 uniform float uSurfaceWeights[8];
@@ -595,6 +595,25 @@ vec2 coverUv(vec2 uv) {
   );
 
   return vec2(0.5) + (viewportUv - vec2(0.5)) * uCoverScale;
+}
+
+vec2 rippleFieldUv(vec2 uv) {
+  vec2 documentPixels = vec2(uv.x, 1.0 - uv.y) * uPresentationSize;
+  vec2 viewportPixels = documentPixels - uScrollOffset;
+
+  return vec2(
+    viewportPixels.x / max(uVisibleViewportSize.x, 1.0),
+    1.0 - viewportPixels.y / max(uVisibleViewportSize.y, 1.0)
+  );
+}
+
+vec3 sampleRippleState(vec2 uv) {
+  if (uHasRippleTexture < 0.5) return vec3(0.0);
+
+  vec4 encoded = texture2D(uRippleTexture, uv);
+  if (encoded.b < (1.0 / 255.0)) return vec3(0.0);
+
+  return vec3(encoded.r * 2.0 - 1.0, encoded.g * 2.0 - 1.0, encoded.b);
 }
 
 vec3 compressWallpaperLuminance(vec3 color, float wallpaperExposure) {
@@ -780,14 +799,7 @@ void main() {
   float dynamicMask = 0.0;
   vec2 staticRefraction = vec2(0.0);
   vec2 dynamicRefraction = vec2(0.0);
-  vec2 wakeDirection = length(uWakeDirection) > 0.0001 ? normalize(uWakeDirection) : vec2(0.0, -1.0);
-  vec2 wakePerpendicular = vec2(-wakeDirection.y, wakeDirection.x);
-  vec2 trailRefraction = vec2(0.0);
-  float trailEnergy = 0.0;
-  float trailSpatialSpan = 0.0;
-  float motionRangeCompression = mix(1.0, 1.34, uMotionExpansion);
-  const float dynamicRangeScale = ${DYNAMIC_RANGE_SCALE.toFixed(2)};
-  const float dynamicRangeDensity = ${DYNAMIC_RANGE_DENSITY.toFixed(3)};
+${GLASS_FLUID_FRAGMENT_SETUP}
   float interactionMask = uInteractionRectCount > 0 ? 0.0 : 1.0;
   for (int interactionIndex = 0; interactionIndex < 8; interactionIndex++) {
     if (interactionIndex >= uInteractionRectCount) break;
@@ -804,52 +816,28 @@ void main() {
     );
   }
 
-  for (int trailIndex = 0; trailIndex < 4; trailIndex++) {
-    if (trailIndex >= uTrailCount) break;
-
-    vec4 trail = uTrail[trailIndex];
-    vec2 trailDelta = vUv - trail.xy;
-    trailDelta *= uPresentationSize / max(uVisibleViewportSize.y, 1.0) * motionRangeCompression;
-    vec2 trailSpanDelta = trail.xy - uPointer;
-    trailSpanDelta *= uPresentationSize / max(uVisibleViewportSize.y, 1.0) * motionRangeCompression;
-    trailSpatialSpan = max(trailSpatialSpan, length(trailSpanDelta) * trail.z);
-    float along = dot(trailDelta, wakeDirection);
-    float across = dot(trailDelta, wakePerpendicular);
-    float trailAlongDensity = mix(42.0, 22.0, uMotionExpansion) * dynamicRangeDensity;
-    float trailAcrossDensity = mix(210.0, 86.0, uMotionExpansion) * dynamicRangeDensity;
-    float lobe =
-      exp(-(along * along * trailAlongDensity + across * across * trailAcrossDensity)) * trail.z * uMotion;
-    float wake = mix(0.88, 0.58, float(trailIndex) / 3.0);
-
-    trailRefraction +=
-      (wakeDirection * 0.0048 + wakePerpendicular * across * 0.018) *
-      lobe *
-      uDeformationStrength *
-      uFlowStrength;
-    trailEnergy += lobe * wake * mix(0.72, 0.42, float(trailIndex) / 3.0);
+${GLASS_FLUID_FRAGMENT_TRAIL_AND_FIELD}
+  float rippleMode = step(0.5, uDynamicsMode) * (1.0 - step(1.5, uDynamicsMode));
+  vec3 rippleState = vec3(0.0);
+  vec2 rippleGradient = vec2(0.0);
+  if (rippleMode > 0.5 && uHasRippleTexture > 0.5) {
+    vec2 rippleUv = rippleFieldUv(vUv);
+    rippleState = sampleRippleState(rippleUv);
+    float rippleLeft = sampleRippleState(rippleUv - vec2(uRippleTexelSize.x, 0.0)).x;
+    float rippleRight = sampleRippleState(rippleUv + vec2(uRippleTexelSize.x, 0.0)).x;
+    float rippleBottom = sampleRippleState(rippleUv - vec2(0.0, uRippleTexelSize.y)).x;
+    float rippleTop = sampleRippleState(rippleUv + vec2(0.0, uRippleTexelSize.y)).x;
+    rippleGradient = vec2(rippleRight - rippleLeft, rippleTop - rippleBottom) * 0.5;
   }
-
-  vec4 flowSample = uHasFlowTexture > 0.5 ? texture2D(uFlowTexture, vUv) : vec4(0.5, 0.5, 0.0, 1.0);
-  vec2 temporalFlow =
-    uHasFlowTexture > 0.5
-      ? (flowSample.xy * 2.0 - 1.0) *
-        flowSample.z *
-        uMotion *
-        uDeformationStrength *
-        uFlowStrength
-      : vec2(0.0);
-  float flowSurfaceDetail = 0.0;
-  if (uQuality > 0.5 && uHasFlowTexture > 0.5) {
-    vec2 flowTexel = vec2(3.0) / max(uPresentationSize, vec2(1.0));
-    vec3 flowLeft = texture2D(uFlowTexture, vUv - vec2(flowTexel.x, 0.0)).xyz;
-    vec3 flowRight = texture2D(uFlowTexture, vUv + vec2(flowTexel.x, 0.0)).xyz;
-    vec3 flowBottom = texture2D(uFlowTexture, vUv - vec2(0.0, flowTexel.y)).xyz;
-    vec3 flowTop = texture2D(uFlowTexture, vUv + vec2(0.0, flowTexel.y)).xyz;
-    float flowGradient = length(flowRight.xy - flowLeft.xy) + length(flowTop.xy - flowBottom.xy);
-    float energyGradient = abs(flowRight.z - flowLeft.z) + abs(flowTop.z - flowBottom.z);
-    flowSurfaceDetail = smoothstep(0.015, 0.24, flowGradient + energyGradient * 0.72) * uMotion;
-  }
+  float rippleGradientLength = length(rippleGradient);
+  float rippleGradientEnergy = smoothstep(0.003, 0.08, rippleGradientLength);
+  // 半浮点高度场保留连续波前；真实梯度直接决定方向和幅度，不放大量化噪声。
+  vec2 rippleRefraction =
+    rippleGradient * mix(230.0, 335.0, uQuality) * uRippleDeformationStrength;
+  rippleRefraction /= max(uPresentationSize, vec2(1.0));
   float frosted = step(1.5, uAppearance);
+  float rippleAppearanceScale = uAppearance > 1.5 ? 1.25 : (uAppearance > 0.5 ? 0.86 : 0.72);
+  rippleRefraction *= rippleAppearanceScale;
 
   for (int i = 0; i < 8; i++) {
     if (i >= uRectCount) break;
@@ -876,109 +864,26 @@ void main() {
     float localDirectionalReflection = broadLight * mix(0.34, 1.0, litResponse) * rectMask;
     float localTopPrism = topEdge * mix(0.38, 1.0, 1.0 - local.x) * rectMask;
     float localBacklightAbsorption = max(rightEdge * 0.72, bottomEdge * 0.46) * rectMask;
-    vec2 pointerDelta = uPointer - vUv;
-    vec2 pointerDeltaAspect = pointerDelta;
-    pointerDeltaAspect *= uPresentationSize / max(uVisibleViewportSize.y, 1.0) * motionRangeCompression;
-    // 三材质共享指针几何足迹；磨砂身份由位移幅度、低通扩散和材质合成表达。
-    float pointerSpread = mix(26.0, 17.0, uQuality);
-    pointerSpread *= dynamicRangeDensity * mix(1.0, 0.46, uMotionExpansion);
-    float sharedDirectionality = smoothstep(0.015, 0.18, trailSpatialSpan);
-    float pointerAlong = dot(-pointerDeltaAspect, wakeDirection);
-    float pointerAcross = dot(-pointerDeltaAspect, wakePerpendicular);
-    float sharedWakeTravel =
-      0.08 * sharedDirectionality * mix(0.86, 1.18, uMotionExpansion);
-    float radialPointerShape = exp(-dot(pointerDeltaAspect, pointerDeltaAspect) * pointerSpread);
-    float directionalPointerShape =
-      exp(-(
-        pow(pointerAlong + sharedWakeTravel * 0.45, 2.0) * pointerSpread * 0.72 +
-        pointerAcross * pointerAcross * pointerSpread * 1.35
-      ));
-    float pointerEnergy =
-      clamp(mix(radialPointerShape, directionalPointerShape, sharedDirectionality) * uMotion, 0.0, 1.0);
-    float sharedWaveDensity = mix(2.81, 1.63, uMotionExpansion);
-    float radialSharedWave =
-      exp(-dot(pointerDeltaAspect, pointerDeltaAspect) * sharedWaveDensity);
-    float directionalSharedWave =
-      exp(-(
-        pow(pointerAlong + sharedWakeTravel, 2.0) * sharedWaveDensity * 0.62 +
-        pointerAcross * pointerAcross * sharedWaveDensity * 2.2
-      ));
-    float sharedWaveEnergy =
-      mix(radialSharedWave, directionalSharedWave, sharedDirectionality) *
-      clamp(length(uPointerVelocity) * 14.0 * uTranslationStrength, 0.0, 1.0) *
-      mix(1.0, 0.78, sharedDirectionality) *
-      uMotion *
-      uMotion;
-    vec2 wakeDelta = vUv - uPointer;
-    wakeDelta *= uPresentationSize / max(uVisibleViewportSize.y, 1.0) * motionRangeCompression;
-    float wakeAlong = dot(wakeDelta, wakeDirection);
-    float wakeAcross = dot(wakeDelta, wakePerpendicular);
-    float wakeTravel =
-      0.014 * dynamicRangeScale *
-      mix(0.82, 1.18, uQuality) *
-      mix(1.0, 1.45, uMotionExpansion);
-    float wakeWidth =
-      mix(0.027, 0.044, uQuality) * dynamicRangeScale * mix(1.0, 1.72, uMotionExpansion);
-    float wakeCoordinate = (wakeAlong + wakeTravel) / wakeWidth;
-    float wakeShape = wakeCoordinate * exp(-0.5 * wakeCoordinate * wakeCoordinate);
-    float wakeEnvelope =
-      exp(
-        -wakeAcross *
-        wakeAcross *
-        mix(280.0, 145.0, uQuality) *
-        dynamicRangeDensity *
-        mix(1.0, 0.44, uMotionExpansion)
-      );
-    vec2 wakeRefraction =
-      wakeDirection *
-      wakeShape *
-      wakeEnvelope *
-      mix(0.0045, 0.0075, uQuality) *
-      uMotion *
-      uDeformationStrength *
-      uFlowStrength;
-    float wakeEnergy = abs(wakeShape) * wakeEnvelope * uMotion;
-    float liquidEnergy = clamp(max(
-      pointerEnergy,
-      max(min(1.0, trailEnergy) * 0.68, wakeEnergy * 0.82)
-    ), 0.0, 1.0);
+${GLASS_FLUID_FRAGMENT_SURFACE_SHAPE}
     float staticLens = 0.00008 + edgeResponse * mix(0.00045, 0.00072, uQuality);
-    float pointerStrength = mix(mix(0.0055, 0.008, uQuality), mix(0.0085, 0.012, uQuality), frosted);
-    float trailStrength = mix(mix(0.78, 1.08, uQuality), mix(0.96, 1.3, uQuality), frosted);
-    float temporalStrength = mix(0.032, 0.042, frosted) * uQuality * (1.0 + flowSurfaceDetail * 0.5);
-    vec2 specularDelta =
-      vUv - (uPointer - wakeDirection * mix(0.006, 0.022, uMotionExpansion) * dynamicRangeScale);
-    specularDelta *= uPresentationSize / max(uVisibleViewportSize.y, 1.0) * motionRangeCompression;
-    float specularAlong = dot(specularDelta, wakeDirection);
-    float specularAcross = dot(specularDelta, wakePerpendicular);
-    float singleSpecular =
-      exp(-(
-        specularAlong * specularAlong * mix(58.0, 25.0, uMotionExpansion) * dynamicRangeDensity +
-        specularAcross * specularAcross * mix(190.0, 78.0, uMotionExpansion) * dynamicRangeDensity
-      )) *
-      uMotion *
-      mix(1.0, 1.24, uMotionExpansion);
-    float localCaustic = singleSpecular * rectMask * surfaceDynamic * interactionMask;
+${GLASS_FLUID_FRAGMENT_SURFACE_OPTICS}
     staticRefraction += lens * staticLens * mix(1.0, 0.72, frosted) * rectMask * surfaceDynamic;
-    vec2 sampleTranslation =
-      uPointerVelocity *
-      mix(0.055, 0.075, uQuality) *
-      uMotion *
-      uTranslationStrength;
-    dynamicRefraction += (
-      sampleTranslation +
-      // 收紧高斯半径时补偿向量峰值，避免范围缩小同时削弱用户设置的形变强度。
-      pointerDelta * pointerEnergy * pointerStrength * uDeformationStrength / dynamicRangeScale +
-      trailRefraction * trailStrength +
-      temporalFlow * temporalStrength +
-      wakeRefraction
-    ) * rectMask * surfaceDynamic * interactionMask;
+${GLASS_FLUID_FRAGMENT_SURFACE_REFRACTION}
+    dynamicRefraction += rippleRefraction * rippleMode * rectMask * surfaceDynamic * interactionMask;
     edge = max(edge, edgeResponse * rectMask * surfaceDynamic);
     caustic = max(caustic, localCaustic);
+    caustic = max(
+      caustic,
+      rippleGradientEnergy * rippleState.z * rippleMode * rectMask * surfaceDynamic * interactionMask
+    );
     directionalReflection = max(directionalReflection, localDirectionalReflection);
     topPrism = max(topPrism, localTopPrism);
     backlightAbsorption = max(backlightAbsorption, localBacklightAbsorption);
     materialEnergy = max(materialEnergy, liquidEnergy * rectMask * surfaceDynamic * interactionMask);
+    materialEnergy = max(
+      materialEnergy,
+      rippleState.z * rippleMode * rectMask * surfaceDynamic * interactionMask
+    );
     sharedMotionPresence = max(
       sharedMotionPresence,
       sharedWaveEnergy * rectMask * surfaceDynamic * interactionMask
@@ -1134,7 +1039,6 @@ const PRESENTATION_RESIZE_SAMPLE_MS = 80
 const PRESENTATION_RESIZE_REQUIRED_SAMPLES = 2
 const SURFACE_STABILITY_MAX_FRAMES = 6
 const SURFACE_STABILITY_REQUIRED_FRAMES = 2
-const FLOW_BUFFER_SCALE = 0.25
 const SURFACE_TRANSITION_DURATION_MS = 96
 const SURFACE_TRANSFORM_TRACKING_MAX_MS = 1000
 
@@ -1313,7 +1217,8 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
   const failedWallpaperPreparationKey = ref('')
   let three: ThreeModule | null = null
   let resources: GlassRendererResources | null = null
-  let flowResources: GlassFlowResources | null = null
+  let fluidDynamics: GlassFluidDynamics | null = null
+  let rippleResources: GlassRippleDynamics | null = null
   let frostPrefilterResources: GlassFrostPrefilterResources | null = null
   let activeTexture: Texture | null = null
   let activeFrostedTarget: WebGLRenderTarget | null = null
@@ -1354,6 +1259,7 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
   let lastTrailAt = Number.NEGATIVE_INFINITY
   let lastPointerX = window.innerWidth * 0.5
   let lastPointerY = window.innerHeight * 0.5
+  let suppressNextPointerVelocity = false
   let pointerTargetX = 0.5
   let pointerTargetY = 0.5
   let pointerPositionX = 0.5
@@ -1376,6 +1282,9 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
   let lastRenderedScrollX = window.scrollX
   let lastRenderedScrollY = window.scrollY
   let unsubscribeInteractionSource: (() => void) | null = null
+  let interactionEventsAttached = false
+  let contextEventCanvas: HTMLCanvasElement | null = null
+  let contextRecoveryCanvas: HTMLCanvasElement | null = null
   let resizeObserver: ResizeObserver | null = null
   let surfaceMutationObserver: MutationObserver | null = null
   let observedSurfaces: HTMLElement[] = []
@@ -1398,6 +1307,7 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
   let contextRecoveryPending = false
   let resumePromise: Promise<void> | null = null
   let resumeVersion = 0
+  let dynamicsGeneration = 0
   const presentationSpace = options.surfaceSpace ?? 'fixed'
   const usesDynamicsOnly = () =>
     presentationSpace === 'scroll' || (presentationSpace === 'fixed' && toValue(options.appearance) === 'frosted')
@@ -1435,6 +1345,14 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
     scrollPresentationRestoreTimer = window.setTimeout(() => finishNativeScrollPresentation(), 180)
     if (scrollWallpaperSamplingSuppressed) return
 
+    if (hasRippleCapability() && rippleResources) {
+      interactionAnimating = false
+      cancelScheduledFrame()
+      rippleResources.reset()
+      resources.uniforms.uRippleTexture.value = rippleResources.texture
+      resources.uniforms.uHasRippleTexture.value = 0
+      resetInteractionState()
+    }
     scrollWallpaperSamplingSuppressed = true
     syncWallpaperSamplingMode()
     document.documentElement.dataset.glassScrollPresentation = 'native'
@@ -1750,82 +1668,145 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
   }
 
   /** 释放仅由高质量档使用的短时液态位移场。 */
-  function disposeFlowResources() {
-    if (!flowResources) return
+  function disposeFluidDynamics() {
+    if (!fluidDynamics) return
 
-    flowResources.material.dispose()
-    flowResources.readTarget.dispose()
-    flowResources.writeTarget.dispose()
-    flowResources = null
+    fluidDynamics.dispose()
+    fluidDynamics = null
     if (resources) {
       resources.uniforms.uFlowTexture.value = null
       resources.uniforms.uHasFlowTexture.value = 0
     }
   }
 
+  /** 释放只由水漾模式持有的时序场，并断开主材质纹理。 */
+  function disposeRippleResources() {
+    dynamicsGeneration += 1
+    rippleResources?.dispose()
+    rippleResources = null
+    if (!resources) return
+
+    resources.uniforms.uRippleTexture.value = null
+    resources.uniforms.uHasRippleTexture.value = 0
+    resources.uniforms.uRippleTexelSize.value.set(1, 1)
+  }
+
   /** 根据当前质量档创建或释放共享 renderer 内的液态位移场。 */
-  function syncFlowResources() {
+  function syncFluidDynamics() {
     if (!resources || !three) return
 
     const profile = getRenderProfile()
-    if (!profile.flowField) {
-      disposeFlowResources()
+    if (!hasFluidCapability() || !profile.flowField) {
+      disposeFluidDynamics()
       return
     }
-    if (flowResources) return
+    if (fluidDynamics) return
 
-    const createTarget = () =>
-      new three!.WebGLRenderTarget(1, 1, {
-        depthBuffer: false,
-        magFilter: three!.LinearFilter,
-        minFilter: three!.LinearFilter,
-        stencilBuffer: false,
-      })
-    const uniforms: GlassFlowUniforms = {
-      uDecay: { value: 1 },
-      uInjection: { value: 0 },
-      uPointer: { value: resources.uniforms.uPointer.value },
-      uPrevious: { value: null },
-      uTexelSize: { value: new three.Vector2(1, 1) },
-      uVelocity: { value: resources.uniforms.uPointerVelocity.value },
-      uViewportAspect: { value: window.innerWidth / Math.max(window.innerHeight, 1) },
-    }
-    const material = new three.ShaderMaterial({
-      depthTest: false,
-      depthWrite: false,
-      fragmentShader: FLOW_FRAGMENT_SHADER,
-      uniforms,
-      vertexShader: VERTEX_SHADER,
+    fluidDynamics = createGlassFluidDynamics({
+      camera: resources.camera,
+      geometry: resources.geometry,
+      pointer: resources.uniforms.uPointer.value,
+      renderer: resources.renderer,
+      three,
+      velocity: resources.uniforms.uPointerVelocity.value,
     })
-    const scene = new three.Scene()
-    const mesh = new three.Mesh(resources.geometry, material)
-    mesh.frustumCulled = false
-    scene.add(mesh)
-    flowResources = {
-      material,
-      mesh,
-      readTarget: createTarget(),
-      scene,
-      uniforms,
-      writeTarget: createTarget(),
-    }
     resources.uniforms.uHasFlowTexture.value = 1
+  }
+
+  /** 只在水漾被选中时为当前 context 编译并分配独占 ping-pong 场。 */
+  async function syncRippleResources() {
+    if (!resources || !three) return
+    if (!hasRippleCapability()) {
+      disposeRippleResources()
+      return
+    }
+    if (rippleResources) return
+
+    const ownerResources = resources
+    const generation = ++dynamicsGeneration
+    const quality: GlassRippleQuality = toValue(options.quality) === 'high' ? 'high' : 'balanced'
+    let ripple: GlassRippleDynamics
+    try {
+      ripple = await createGlassRippleDynamics({
+        camera: ownerResources.camera,
+        geometry: ownerResources.geometry,
+        quality,
+        renderer: ownerResources.renderer,
+        three,
+        viewportHeight: window.innerHeight,
+        viewportWidth: window.innerWidth,
+      })
+    } catch (error) {
+      if (generation !== dynamicsGeneration || resources !== ownerResources || !hasRippleCapability()) return
+      throw error
+    }
+    if (generation !== dynamicsGeneration || resources !== ownerResources || !hasRippleCapability()) {
+      ripple.dispose()
+      return
+    }
+
+    rippleResources = ripple
+    ripple.setParameters(
+      toValue(options.translationStrength ?? getLegacyDynamicStrength()),
+      toValue(options.flowStrength ?? getLegacyDynamicStrength()),
+    )
+    ownerResources.uniforms.uRippleTexture.value = ripple.texture
+    ownerResources.uniforms.uRippleTexelSize.value.copy(ripple.texelSize)
+    ownerResources.uniforms.uHasRippleTexture.value = ripple.texture ? 1 : 0
+  }
+
+  /** 模式切换时同步释放旧策略、清空输入历史并在资源就绪后恢复订阅。 */
+  async function syncDynamicsMode() {
+    if (!resources) return
+
+    interactionAnimating = false
+    activeTouchIdentifier = null
+    cancelScheduledFrame()
+    removeInteractionEvents()
+    resetInteractionState()
+    lastPointerAt = 0
+    lastPointerX = window.innerWidth * 0.5
+    lastPointerY = window.innerHeight * 0.5
+    suppressNextPointerVelocity = true
+    wakeDirection = { x: 0, y: -1 }
+
+    const mode = getDynamicsMode()
+    resources.uniforms.uDynamicsMode.value = getDynamicsModeUniformValue()
+    resources.uniforms.uTranslationStrength.value = mode === 'fluid' ? getTranslationStrengthScale() : 0
+    resources.uniforms.uDeformationStrength.value = mode === 'fluid' ? getDeformationStrengthScale() : 0
+    resources.uniforms.uFlowStrength.value = mode === 'fluid' ? getFlowStrengthScale() : 0
+    resources.uniforms.uMotionExpansion.value = mode === 'fluid' ? getMotionExpansion() : 0
+    resources.uniforms.uMaxRefractionPixels.value = getMaxRefractionPixels()
+    resources.uniforms.uRippleDeformationStrength.value =
+      mode === 'ripple'
+        ? Math.min(1, Math.max(0, toValue(options.deformationStrength ?? getLegacyDynamicStrength()) / 100))
+        : 0
+    resources.uniforms.uTrailCount.value = mode === 'fluid' ? getRenderProfile().trailCount : 0
+
+    if (mode === 'fluid') {
+      disposeRippleResources()
+      syncFluidDynamics()
+    } else if (mode === 'ripple') {
+      disposeFluidDynamics()
+      await syncRippleResources()
+    } else {
+      disposeFluidDynamics()
+      disposeRippleResources()
+    }
+
+    if (!resources || getDynamicsMode() !== mode) return
+
+    if (mode !== 'off') setupInteractionEvents()
+    resizeRenderer()
+    scheduleFrame()
   }
 
   function renderFrame(timestamp = performance.now(), advanceFlow = true) {
     if (!resources || !toValue(options.active) || document.visibilityState === 'hidden') return
 
     updateWallpaperTransition(timestamp)
-    if (flowResources && advanceFlow) {
-      resources.renderer.setScissorTest(false)
-      flowResources.uniforms.uPrevious.value = flowResources.readTarget.texture
-      resources.renderer.setRenderTarget(flowResources.writeTarget)
-      resources.renderer.render(flowResources.scene, resources.camera)
-      resources.renderer.setRenderTarget(null)
-      const previousReadTarget = flowResources.readTarget
-      flowResources.readTarget = flowResources.writeTarget
-      flowResources.writeTarget = previousReadTarget
-      resources.uniforms.uFlowTexture.value = flowResources.readTarget.texture
+    if (fluidDynamics && advanceFlow) {
+      resources.uniforms.uFlowTexture.value = fluidDynamics.step()
     }
     if (presentationSpace === 'scroll') {
       const { height: presentationHeight } = getCommittedPresentationSize()
@@ -1943,6 +1924,12 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
     for (const surface of surfaceRegistry) {
       const mode = surface.mode ?? 'dynamic'
       if (mode === 'static-material') continue
+
+      // 显式 optical boundary 自身定义完整材质边界；嵌套交互卡只承载其内部内容。
+      if (surface.key.matches(OPTICAL_BOUNDARY_SELECTOR)) {
+        append(surface.key, surface.key, mode, surface.rect)
+        continue
+      }
 
       const surfaceIsClip = surface.key.matches(INTERACTION_CLIP_SELECTOR)
       if (surfaceIsClip) append(surface.key, surface.key, mode, surface.rect)
@@ -2343,23 +2330,66 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
     return toValue(options.motionStrength ?? GLASS_OPTICAL_STRENGTH_DEFAULT)
   }
 
+  function getDynamicsMode(): ThemeCustomizerGlassDynamicsMode {
+    if (!toValue(options.dynamicsActive ?? true)) return 'off'
+
+    return toValue(options.dynamicsMode ?? 'fluid')
+  }
+
+  function hasDynamicCapability() {
+    return getDynamicsMode() !== 'off'
+  }
+
+  function hasFluidCapability() {
+    return getDynamicsMode() === 'fluid'
+  }
+
+  function hasRippleCapability() {
+    return getDynamicsMode() === 'ripple'
+  }
+
+  function getDynamicsModeUniformValue() {
+    const mode = getDynamicsMode()
+
+    return mode === 'fluid' ? 0 : mode === 'ripple' ? 1 : 2
+  }
+
   function getTranslationStrengthScale() {
+    if (!hasFluidCapability()) return 0
+
     return getGlassOpticalTranslationStrengthScale(toValue(options.translationStrength ?? getLegacyDynamicStrength()))
   }
 
   function getDeformationStrengthScale() {
+    if (!hasFluidCapability()) return 0
+
     return getGlassOpticalDeformationStrengthScale(toValue(options.deformationStrength ?? getLegacyDynamicStrength()))
   }
 
   function getFlowStrengthScale() {
+    if (!hasFluidCapability()) return 0
+
     return getGlassOpticalFlowStrengthScale(toValue(options.flowStrength ?? getLegacyDynamicStrength()))
   }
 
   function getMotionExpansion() {
+    if (!hasFluidCapability()) return 0
+
     return getGlassOpticalMotionExpansion(toValue(options.flowStrength ?? getLegacyDynamicStrength()))
   }
 
   function getMaxRefractionPixels() {
+    if (!hasDynamicCapability()) return 0
+
+    if (hasRippleCapability()) {
+      const deformation = Math.min(
+        1,
+        Math.max(0, toValue(options.deformationStrength ?? getLegacyDynamicStrength()) / 100),
+      )
+
+      return (toValue(options.quality) === 'high' ? 40 : 28) * deformation
+    }
+
     return getGlassOpticalMaxRefractionPixels(
       getRenderProfile().maxRefractionPixels,
       toValue(options.deformationStrength ?? getLegacyDynamicStrength()),
@@ -2412,17 +2442,12 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
       presentationSpace === 'scroll' ? window.scrollX : 0,
       presentationSpace === 'scroll' ? window.scrollY : 0,
     )
-    if (flowResources) {
-      const flowWidth = Math.max(96, Math.round(buffer.width * FLOW_BUFFER_SCALE))
-      const flowHeight = Math.max(96, Math.round(buffer.height * FLOW_BUFFER_SCALE))
-      const flowBufferChanged =
-        flowResources.readTarget.width !== flowWidth || flowResources.readTarget.height !== flowHeight
-      if (flowBufferChanged) {
-        flowResources.readTarget.setSize(flowWidth, flowHeight)
-        flowResources.writeTarget.setSize(flowWidth, flowHeight)
-      }
-      flowResources.uniforms.uTexelSize.value.set(1 / flowWidth, 1 / flowHeight)
-      flowResources.uniforms.uViewportAspect.value = viewportWidth / Math.max(viewportHeight, 1)
+    fluidDynamics?.resize(buffer.width, buffer.height, viewportWidth, viewportHeight)
+    if (rippleResources) {
+      rippleResources.resize(viewportWidth, viewportHeight)
+      resources.uniforms.uRippleTexture.value = rippleResources.texture
+      resources.uniforms.uRippleTexelSize.value.copy(rippleResources.texelSize)
+      resources.uniforms.uHasRippleTexture.value = rippleResources.texture ? 1 : 0
     }
     syncCoverScale(viewportWidth, viewportHeight)
     updateSurfaceUniforms(performance.now(), false)
@@ -2581,15 +2606,32 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
     resources.uniforms.uMotion.value = 0
     resources.uniforms.uPointerVelocity.value.set(0, 0)
     for (const trail of resources.uniforms.uTrail.value) trail.z = 0
-    if (flowResources) {
-      flowResources.uniforms.uDecay.value = 0
-      flowResources.uniforms.uInjection.value = 0
-    }
+    fluidDynamics?.clearInput()
   }
 
   function renderInteractionFrame(timestamp: number) {
     if (!resources || !toValue(options.active) || document.visibilityState === 'hidden') {
       animationFrame = null
+      interactionAnimating = false
+      return
+    }
+
+    if (hasRippleCapability()) {
+      writeSurfaceUniforms(timestamp)
+      const keepAnimating = advanceRipple(timestamp)
+      renderFrame(timestamp, false)
+      if (!keepAnimating) {
+        resetInteractionState()
+        interactionAnimating = false
+        return
+      }
+
+      animationFrame = requestAnimationFrame(renderInteractionFrame)
+      return
+    }
+    if (!hasFluidCapability()) {
+      resetInteractionState()
+      renderFrame(timestamp, false)
       interactionAnimating = false
       return
     }
@@ -2613,14 +2655,23 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
     lastInteractionFrameAt = timestamp
     // 收敛期只衰减能量；输入方向保留到最终清场，避免低能量归一化时发生方向跳变。
     resources.uniforms.uMotion.value = motion
-    if (flowResources) {
-      flowResources.uniforms.uDecay.value = getGlassOpticalDecay(profile.flowHalfLife, delta)
-      flowResources.uniforms.uInjection.value = pendingFlowInjection
-    }
+    fluidDynamics?.setFrameParameters(getGlassOpticalDecay(profile.flowHalfLife, delta), pendingFlowInjection)
     pendingFlowInjection = 0
     renderFrame()
-    if (flowResources) flowResources.uniforms.uInjection.value = 0
+    fluidDynamics?.finishFrame()
     animationFrame = requestAnimationFrame(renderInteractionFrame)
+  }
+
+  /** 推进并重新绑定当前 ripple 场，确保 deadline 清场与主材质纹理状态原子提交。 */
+  function advanceRipple(timestamp: number) {
+    if (!resources || !rippleResources || !hasRippleCapability()) return false
+
+    const keepAnimating = rippleResources.step(timestamp)
+    resources.uniforms.uRippleTexture.value = rippleResources.texture
+    resources.uniforms.uRippleTexelSize.value.copy(rippleResources.texelSize)
+    resources.uniforms.uHasRippleTexture.value = rippleResources.texture ? 1 : 0
+
+    return keepAnimating
   }
 
   function startInteractionAnimation() {
@@ -2639,6 +2690,13 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
     timestamp: number,
     velocityOverride?: { x: number; y: number },
   ) {
+    if (
+      !hasDynamicCapability() ||
+      (hasRippleCapability() && presentationSpace === 'scroll' && scrollWallpaperSamplingSuppressed)
+    ) {
+      return
+    }
+
     const viewportWidth = Math.max(window.innerWidth, 1)
     const viewportHeight = Math.max(window.innerHeight, 1)
     const presentation = getCommittedPresentationSize()
@@ -2647,14 +2705,20 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
     const elapsed = Math.max(8, timestamp - lastPointerAt)
     const previousNormalizedX = previousPoint.x / Math.max(presentation.width, 1)
     const previousNormalizedY = 1 - previousPoint.y / Math.max(presentation.height, 1)
-    const velocityX = velocityOverride?.x ?? ((clientX - lastPointerX) / viewportWidth) * Math.min(2, 16.67 / elapsed)
-    const velocityY = velocityOverride?.y ?? (-(clientY - lastPointerY) / viewportHeight) * Math.min(2, 16.67 / elapsed)
+    const suppressVelocity = suppressNextPointerVelocity && velocityOverride === undefined
+    const velocityX =
+      velocityOverride?.x ??
+      (suppressVelocity ? 0 : ((clientX - lastPointerX) / viewportWidth) * Math.min(2, 16.67 / elapsed))
+    const velocityY =
+      velocityOverride?.y ??
+      (suppressVelocity ? 0 : (-(clientY - lastPointerY) / viewportHeight) * Math.min(2, 16.67 / elapsed))
     const velocityLength = Math.hypot(velocityX, velocityY)
     const velocityScale = velocityLength > 0.09 ? 0.09 / velocityLength : 1
     const interactionTarget = findInteractionTarget(point.x, point.y)
     lastPointerX = clientX
     lastPointerY = clientY
     lastPointerAt = timestamp
+    suppressNextPointerVelocity = false
     if (!resources || !interactionTarget || interactionTarget.surface.mode === 'static-material') return
 
     const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -2665,6 +2729,31 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
       updateInteractionClips()
       writeSurfaceUniforms(timestamp)
     }
+    const scaledVelocity = { x: velocityX * velocityScale, y: velocityY * velocityScale }
+    if (hasRippleCapability()) {
+      if (reducedMotion || !rippleResources) {
+        resetInteractionState()
+        scheduleFrame()
+        return
+      }
+
+      rippleResources.inject({
+        direction: scaledVelocity,
+        point: {
+          x: clientX / viewportWidth,
+          y: 1 - clientY / viewportHeight,
+        },
+        speed: Math.min(1, velocityLength / 0.09),
+        timestamp,
+      })
+      resources.uniforms.uMotion.value = 0
+      resources.uniforms.uPointerVelocity.value.set(0, 0)
+      resources.uniforms.uTrailCount.value = 0
+      lastInteractionAt = timestamp
+      startInteractionAnimation()
+      return
+    }
+
     const startsInteraction = !interactionAnimating
     const hasTrailAnchor = Number.isFinite(lastTrailAt)
     const normalizedX = point.x / Math.max(presentation.width, 1)
@@ -2679,7 +2768,6 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
         window.innerWidth <= 600 || matchMedia('(pointer: coarse)').matches || activeTouchIdentifier !== null
       updatePointerTarget(normalizedX, normalizedY, directTouchResponse ? 1 : profile.pointerImmediateResponse)
     }
-    const scaledVelocity = { x: velocityX * velocityScale, y: velocityY * velocityScale }
     wakeDirection = getGlassOpticalWakeDirection(
       wakeDirection,
       scaledVelocity,
@@ -2703,10 +2791,7 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
       cancelScheduledFrame()
       pendingFlowInjection = 0
       for (const trail of resources.uniforms.uTrail.value) trail.z = 0
-      if (flowResources) {
-        flowResources.uniforms.uDecay.value = 0
-        flowResources.uniforms.uInjection.value = 0
-      }
+      fluidDynamics?.clearInput()
       scheduleFrame()
       return
     }
@@ -2779,6 +2864,8 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
   }
 
   function handleInteractionEvent(event: PointerEvent | TouchEvent) {
+    if (!hasDynamicCapability()) return
+
     if (event.type === 'pointermove') {
       handlePointerMove(event as PointerEvent)
       return
@@ -2939,8 +3026,14 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
 
       resizeRenderer()
       updateSurfaceUniforms()
-      resetInteractionState()
-      renderFrame(performance.now())
+      const timestamp = performance.now()
+      const keepRippleAnimating = hasRippleCapability() ? advanceRipple(timestamp) : false
+      if (!keepRippleAnimating) resetInteractionState()
+      renderFrame(timestamp, !hasRippleCapability())
+      if (keepRippleAnimating) {
+        interactionAnimating = true
+        animationFrame = requestAnimationFrame(renderInteractionFrame)
+      }
       scheduleWallpaperTransition()
     })()
 
@@ -2987,10 +3080,11 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
 
   function handleContextLost(event: Event) {
     event.preventDefault()
-    const canvas = options.canvas.value
+    const canvas = contextEventCanvas ?? options.canvas.value
     disposeRenderer(false)
     contextRecoveryPending = true
     // 丢失的 context 已回收全部 GPU 对象；在恢复前释放旧 Three 状态，避免恢复后删除失效句柄。
+    contextRecoveryCanvas = canvas
     canvas?.addEventListener('webglcontextrestored', handleContextRestored, { once: true })
     updateRendererState('fallback')
   }
@@ -2999,6 +3093,8 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
     if (!contextRecoveryPending) return
 
     contextRecoveryPending = false
+    contextRecoveryCanvas?.removeEventListener('webglcontextrestored', handleContextRestored)
+    contextRecoveryCanvas = null
     void initializeRenderer(false)
   }
 
@@ -3026,7 +3122,7 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
 
       observedMutationRoots.add(root)
       surfaceMutationObserver?.observe(root, {
-        attributeFilter: ['data-glass-optical-mode'],
+        attributeFilter: ['data-glass-optical-boundary', 'data-glass-optical-mode'],
         attributes: true,
         childList: true,
         subtree,
@@ -3051,7 +3147,10 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
     })
   }
 
-  function setupEvents() {
+  function setupInteractionEvents() {
+    if (!hasDynamicCapability() || interactionEventsAttached) return
+
+    interactionEventsAttached = true
     if (options.interactionSource) {
       unsubscribeInteractionSource = options.interactionSource.subscribe(presentationSpace, handleInteractionEvent)
     } else {
@@ -3061,6 +3160,43 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
       window.addEventListener('touchend', handleTouchEnd, { passive: true })
       window.addEventListener('touchcancel', handleTouchEnd, { passive: true })
     }
+  }
+
+  function removeInteractionEvents() {
+    if (!interactionEventsAttached) return
+
+    interactionEventsAttached = false
+    unsubscribeInteractionSource?.()
+    unsubscribeInteractionSource = null
+    if (options.interactionSource) return
+
+    window.removeEventListener('pointermove', handlePointerMove)
+    window.removeEventListener('touchstart', handleTouchStart)
+    window.removeEventListener('touchmove', handleTouchMove)
+    window.removeEventListener('touchend', handleTouchEnd)
+    window.removeEventListener('touchcancel', handleTouchEnd)
+  }
+
+  /** context 生命周期在异步 shader 编译前生效，确保初始化中的丢失也进入统一恢复状态机。 */
+  function setupContextEvents(canvas: HTMLCanvasElement) {
+    if (contextEventCanvas === canvas) return
+
+    removeContextEvents()
+    contextEventCanvas = canvas
+    canvas.addEventListener('webglcontextlost', handleContextLost)
+    canvas.addEventListener('webglcontextrestored', handleContextRestored)
+  }
+
+  function removeContextEvents() {
+    contextEventCanvas?.removeEventListener('webglcontextlost', handleContextLost)
+    contextEventCanvas?.removeEventListener('webglcontextrestored', handleContextRestored)
+    contextEventCanvas = null
+    contextRecoveryCanvas?.removeEventListener('webglcontextrestored', handleContextRestored)
+    contextRecoveryCanvas = null
+  }
+
+  function setupEvents() {
+    setupInteractionEvents()
     window.addEventListener('resize', handleWindowResize, { passive: true })
     window.addEventListener('transitionrun', handleSurfaceTransitionRun, { capture: true, passive: true })
     window.addEventListener('transitionend', handleSurfaceTransitionEnd, { capture: true, passive: true })
@@ -3072,20 +3208,10 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
       window.addEventListener('scroll', handleScroll, { capture: true, passive: true })
       window.addEventListener('scrollend', handleScrollEnd, { passive: true })
     }
-    options.canvas.value?.addEventListener('webglcontextlost', handleContextLost)
-    options.canvas.value?.addEventListener('webglcontextrestored', handleContextRestored)
   }
 
   function removeEvents() {
-    unsubscribeInteractionSource?.()
-    unsubscribeInteractionSource = null
-    if (!options.interactionSource) {
-      window.removeEventListener('pointermove', handlePointerMove)
-      window.removeEventListener('touchstart', handleTouchStart)
-      window.removeEventListener('touchmove', handleTouchMove)
-      window.removeEventListener('touchend', handleTouchEnd)
-      window.removeEventListener('touchcancel', handleTouchEnd)
-    }
+    removeInteractionEvents()
     window.removeEventListener('resize', handleWindowResize)
     window.removeEventListener('transitionrun', handleSurfaceTransitionRun, true)
     window.removeEventListener('transitionend', handleSurfaceTransitionEnd, true)
@@ -3097,8 +3223,7 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
       window.removeEventListener('scroll', handleScroll, true)
       window.removeEventListener('scrollend', handleScrollEnd)
     }
-    options.canvas.value?.removeEventListener('webglcontextlost', handleContextLost)
-    options.canvas.value?.removeEventListener('webglcontextrestored', handleContextRestored)
+    removeContextEvents()
   }
 
   function disposeRenderer(releaseContext = true) {
@@ -3180,7 +3305,8 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
     releasePreparedWallpaper()
     clearPreparedWallpaperFailure()
 
-    disposeFlowResources()
+    disposeFluidDynamics()
+    disposeRippleResources()
     disposeFrostPrefilterResources()
     if (resources) {
       resources.geometry.dispose()
@@ -3667,10 +3793,12 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
         uCoverScale: { value: new three.Vector2(1, 1) },
         uDeformationStrength: { value: getDeformationStrengthScale() },
         uDynamicsOnly: { value: usesDynamicsOnly() ? 1 : 0 },
+        uDynamicsMode: { value: getDynamicsModeUniformValue() },
         uFlowTexture: { value: null },
         uFlowStrength: { value: getFlowStrengthScale() },
         uHasFlowTexture: { value: 0 },
         uHasFrostedTexture: { value: 0 },
+        uHasRippleTexture: { value: 0 },
         uHasWallpaperTexture: { value: 0 },
         uInteractionRadii: { value: Array.from({ length: 8 }, () => new Vector4Class()) },
         uInteractionRectCount: { value: 0 },
@@ -3685,6 +3813,13 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
         uPreviousWallpaperExposure: { value: DEFAULT_GLASS_WALLPAPER_TONE_PROFILE.exposure },
         uQuality: { value: toValue(options.quality) === 'high' ? 1 : 0 },
         uReflectionStrength: { value: getReflectionStrengthScale() },
+        uRippleDeformationStrength: {
+          value: hasRippleCapability()
+            ? Math.min(1, Math.max(0, toValue(options.deformationStrength ?? getLegacyDynamicStrength()) / 100))
+            : 0,
+        },
+        uRippleTexelSize: { value: new three.Vector2(1, 1) },
+        uRippleTexture: { value: null },
         uRadii: { value: Array.from({ length: 8 }, () => new Vector4Class()) },
         uRectCount: { value: 0 },
         uRects: { value: Array.from({ length: 8 }, () => new Vector4Class()) },
@@ -3707,7 +3842,7 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
         },
         uTranslationStrength: { value: getTranslationStrengthScale() },
         uTrail: { value: Array.from({ length: 4 }, () => new Vector4Class(0.5, 0.5, 0, 0)) },
-        uTrailCount: { value: getRenderProfile().trailCount },
+        uTrailCount: { value: hasFluidCapability() ? getRenderProfile().trailCount : 0 },
         uVisibleViewportSize: { value: new three.Vector2(window.innerWidth, window.innerHeight) },
         uScrollOffset: { value: new three.Vector2(0, 0) },
         uWakeDirection: { value: new three.Vector2(0, -1) },
@@ -3726,7 +3861,18 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
       mesh.frustumCulled = false
       scene.add(mesh)
       resources = { camera, geometry, material, mesh, renderer, scene, uniforms }
-      syncFlowResources()
+      const ownerResources = resources
+      setupContextEvents(canvas)
+      syncFluidDynamics()
+      await syncRippleResources()
+      if (
+        version !== loadVersion ||
+        resources !== ownerResources ||
+        !toValue(options.active) ||
+        options.canvas.value !== canvas
+      ) {
+        return
+      }
 
       setupObservers()
       setupEvents()
@@ -3736,6 +3882,13 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
     } catch (error) {
       fallbackFromCurrentLoad(version, '玻璃光学渲染器初始化失败，已回退标准材质:', error)
     }
+  }
+
+  /** 由复合层显式重建已释放的 renderer；失败仍进入 fallback，不安排自动重试。 */
+  function retryAfterFailure() {
+    if (contextRecoveryPending) return Promise.resolve()
+
+    return initializeRenderer()
   }
 
   /** 运行中切换减少透明度时立即释放或恢复光学资源。 */
@@ -3848,6 +4001,20 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
   )
 
   watch(
+    () => [toValue(options.dynamicsActive ?? true), toValue(options.dynamicsMode ?? 'fluid')] as const,
+    async () => {
+      if (!resources) return
+
+      const version = loadVersion
+      try {
+        await syncDynamicsMode()
+      } catch (error) {
+        fallbackFromCurrentLoad(version, '玻璃动态策略切换失败，已回退标准材质:', error)
+      }
+    },
+  )
+
+  watch(
     () => toValue(options.quality),
     async (quality, previousQuality) => {
       if (!resources) return
@@ -3857,28 +4024,41 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
       const applyQuality = () => {
         if (!resources || toValue(options.quality) !== quality) return
 
-        resources.uniforms.uMaxRefractionPixels.value = getGlassOpticalMaxRefractionPixels(
-          nextProfile.maxRefractionPixels,
-          toValue(options.deformationStrength ?? getLegacyDynamicStrength()),
-        )
+        resources.uniforms.uMaxRefractionPixels.value = getMaxRefractionPixels()
         resources.uniforms.uQuality.value = quality === 'high' ? 1 : 0
-        resources.uniforms.uTrailCount.value = nextProfile.trailCount
+        resources.uniforms.uTrailCount.value = hasFluidCapability() ? nextProfile.trailCount : 0
         interactionAnimating = false
         cancelScheduledFrame()
         resetInteractionState()
-        syncFlowResources()
-        resizeRenderer()
+        if (hasRippleCapability()) disposeRippleResources()
+      }
+      const finishQualityChange = async () => {
+        if (!resources || toValue(options.quality) !== quality) return
+
+        await syncDynamicsMode()
       }
 
       if (!profileRequiresTextureReload(previousProfile, nextProfile)) {
         applyQuality()
-        scheduleFrame()
+        try {
+          await finishQualityChange()
+        } catch (error) {
+          fallbackFromCurrentLoad(loadVersion, '玻璃动态质量切换失败，已回退标准材质:', error)
+        }
         return
       }
 
       invalidatePreparedWallpaper()
       await refreshWallpaper('玻璃光学质量切换失败，已保留当前材质:', applyQuality)
-      if (toValue(options.quality) === quality) preparePendingWallpaper()
+      if (toValue(options.quality) === quality) {
+        try {
+          await finishQualityChange()
+        } catch (error) {
+          fallbackFromCurrentLoad(loadVersion, '玻璃动态质量切换失败，已回退标准材质:', error)
+          return
+        }
+        preparePendingWallpaper()
+      }
     },
   )
 
@@ -3912,14 +4092,20 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
     ]) => {
       if (!resources) return
 
-      resources.uniforms.uTranslationStrength.value = getGlassOpticalTranslationStrengthScale(translationStrength)
-      resources.uniforms.uDeformationStrength.value = getGlassOpticalDeformationStrengthScale(deformationStrength)
-      resources.uniforms.uFlowStrength.value = getGlassOpticalFlowStrengthScale(flowStrength)
-      resources.uniforms.uMotionExpansion.value = getGlassOpticalMotionExpansion(flowStrength)
-      resources.uniforms.uMaxRefractionPixels.value = getGlassOpticalMaxRefractionPixels(
-        getRenderProfile().maxRefractionPixels,
-        deformationStrength,
-      )
+      const fluidActive = hasFluidCapability()
+      resources.uniforms.uTranslationStrength.value = fluidActive
+        ? getGlassOpticalTranslationStrengthScale(translationStrength)
+        : 0
+      resources.uniforms.uDeformationStrength.value = fluidActive
+        ? getGlassOpticalDeformationStrengthScale(deformationStrength)
+        : 0
+      resources.uniforms.uFlowStrength.value = fluidActive ? getGlassOpticalFlowStrengthScale(flowStrength) : 0
+      resources.uniforms.uMotionExpansion.value = fluidActive ? getGlassOpticalMotionExpansion(flowStrength) : 0
+      resources.uniforms.uMaxRefractionPixels.value = getMaxRefractionPixels()
+      resources.uniforms.uRippleDeformationStrength.value = hasRippleCapability()
+        ? Math.min(1, Math.max(0, deformationStrength / 100))
+        : 0
+      rippleResources?.setParameters(translationStrength, flowStrength)
       resources.uniforms.uReflectionStrength.value = getGlassOpticalReflectionStrengthScale(reflectionStrength)
       const materialResponse = getGlassMaterialResponse(toValue(options.appearance), transparencyStrength)
       resources.uniforms.uBackgroundVisibility.value = materialResponse.backgroundVisibility
@@ -3927,7 +4113,7 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
       resources.uniforms.uSurfaceDensity.value = materialResponse.surfaceDensity
       resources.uniforms.uTintDensity.value = materialResponse.tintDensity
       resources.uniforms.uTransmissionStrength.value = getGlassOpticalTransmissionStrength(transmissionStrength)
-      if (resources.uniforms.uFlowStrength.value <= 0 && interactionAnimating) {
+      if (fluidActive && resources.uniforms.uFlowStrength.value <= 0 && interactionAnimating) {
         interactionAnimating = false
         cancelScheduledFrame()
         pendingFlowInjection = 0
@@ -4019,6 +4205,7 @@ export function useGlassOpticalRenderer(options: UseGlassOpticalRendererOptions)
     preparedWallpaperUrl,
     preparedWallpaperRevision,
     renderedFrames,
+    retryAfterFailure,
     rollbackPreparedWallpaperActivation,
     state,
   }

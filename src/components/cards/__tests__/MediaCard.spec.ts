@@ -32,17 +32,22 @@ const selectedSitesUrl = new URL('system/setting/public/IndexerSites', API_BASE_
 
 let intersectionObservers: IntersectionObserverMock[] = []
 
+/** 提供可手动触发的视口观察器，供媒体卡片测试验证懒加载行为。 */
 class IntersectionObserverMock implements IntersectionObserver {
   readonly root: Element | Document | null
   readonly rootMargin: string
   readonly thresholds: readonly number[]
+  /** 记录观察器释放调用。 */
   readonly disconnect = vi.fn()
+  /** 记录被观察元素，供后续构造交叉状态。 */
   readonly observe = vi.fn((target: Element) => {
     this.target = target
   })
+  /** 记录停止观察调用。 */
   readonly unobserve = vi.fn()
   private target: Element = document.body
 
+  /** 创建使用指定回调和阈值的测试观察器。 */
   constructor(
     private readonly callback: IntersectionObserverCallback,
     options: IntersectionObserverInit = {},
@@ -53,10 +58,12 @@ class IntersectionObserverMock implements IntersectionObserver {
     intersectionObservers.push(this)
   }
 
+  /** 返回测试期间未消费的观察记录。 */
   takeRecords(): IntersectionObserverEntry[] {
     return []
   }
 
+  /** 手动向组件发送进入或离开视口的交叉状态。 */
   trigger(isIntersecting = true) {
     const bounds = this.target.getBoundingClientRect()
     this.callback(
@@ -76,11 +83,13 @@ class IntersectionObserverMock implements IntersectionObserver {
   }
 }
 
+/** 渲染媒体卡片时可覆盖的用户权限状态。 */
 interface RenderCardOptions {
   permissions?: Record<string, boolean>
   superUser?: boolean
 }
 
+/** 使用指定媒体信息和用户权限渲染媒体卡片。 */
 async function renderCard(media: MediaInfo, options: RenderCardOptions = {}) {
   return renderWithProviders(MediaCard, {
     props: {
@@ -101,32 +110,38 @@ async function renderCard(media: MediaInfo, options: RenderCardOptions = {}) {
   })
 }
 
+/** 获取已渲染的媒体卡片根元素。 */
 function getCard(container: Element) {
   const card = container.querySelector<HTMLElement>('.media-card')
   expect(card).not.toBeNull()
   return card as HTMLElement
 }
 
+/** 获取负责桌面悬停和触摸交互的卡片区域。 */
 function getHoverArea(container: Element) {
   const area = container.querySelector<HTMLElement>('.media-card-hover-area')
   expect(area).not.toBeNull()
   return area as HTMLElement
 }
 
+/** 获取媒体卡片当前渲染的所有操作按钮。 */
 function getActionButtons(container: Element) {
   return [...container.querySelectorAll<HTMLButtonElement>('.media-card .v-card-text button')]
 }
 
+/** 获取媒体搜索操作按钮并确保其已渲染。 */
 function getSearchButton(container: Element) {
   const button = getActionButtons(container)[0]
   expect(button).toBeDefined()
   return button
 }
 
+/** 筛选用于触发媒体状态懒加载的观察器。 */
 function getStatusObservers() {
   return intersectionObservers.filter(observer => observer.thresholds.includes(0.1))
 }
 
+/** 安装站点列表及已选站点的搜索请求处理器。 */
 function installSearchHandlers(sites: Record<string, unknown>[], selected: number[]) {
   server.use(
     http.get(siteListUrl, () => HttpResponse.json(sites)),
@@ -522,6 +537,7 @@ describe('MediaCard', () => {
       name: 'VImg',
       emits: ['error', 'load'],
       props: { src: String },
+      /** 渲染可主动触发图片成功和失败事件的测试替身。 */
       setup(props, { emit, slots }) {
         return () =>
           h('div', { 'data-src': props.src }, [
@@ -560,20 +576,25 @@ describe('MediaCard', () => {
       name: 'VImg',
       emits: ['load'],
       props: { src: String },
+      /** 渲染可主动触发海报加载完成事件的测试替身。 */
       setup(_props, { emit, slots }) {
         return () =>
           h('div', [h('button', { 'aria-label': '图片加载成功', onClick: () => emit('load') }), slots.default?.()])
       },
     })
+    const VIconStub = {
+      props: ['icon'],
+      template: '<i :data-icon="icon" />',
+    }
     const { container } = await renderWithProviders(MediaCard, {
       props: { media, width: '9rem' },
       initialState: { user: { superUser: true } },
-      global: { stubs: { VImg: VImgStub } },
+      global: { stubs: { VIcon: VIconStub, VImg: VImgStub } },
     })
 
     await fireEvent.click(container.querySelector('[aria-label="图片加载成功"]') as HTMLElement)
 
-    await waitFor(() => expect(container.querySelector('.v-avatar .iconify--mdi')).not.toBeNull())
+    await waitFor(() => expect(container.querySelector('[data-icon="mdi-alpha-a-circle"]')).not.toBeNull())
   })
 
   it('hides search and subscribe actions when the user lacks both permissions', async () => {

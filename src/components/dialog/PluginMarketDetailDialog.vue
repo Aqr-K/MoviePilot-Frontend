@@ -36,7 +36,7 @@ const props = defineProps({
 })
 
 // 定义触发的自定义事件
-const emit = defineEmits(['update:modelValue', 'close', 'install'])
+const emit = defineEmits(['update:modelValue', 'close', 'install', 'rating'])
 
 // 弹窗显示状态
 const visible = computed({
@@ -58,9 +58,6 @@ const rating = ref<PluginRating>({
 const selectedRating = ref(props.plugin?.user_rating || 0)
 const ratingLoading = ref(false)
 const ratingSubmitting = ref(false)
-
-// 图片对象
-const imageRef = ref<any>()
 
 // 图片是否加载失败
 const imageLoadError = ref(false)
@@ -97,20 +94,16 @@ function visitPluginPage() {
   if (props.plugin?.is_local || repoUrl?.startsWith('local://')) {
     repoUrl = props.plugin?.author_url
   }
-  if (repoUrl) {
-    if (repoUrl.includes('raw.githubusercontent.com')) {
-      if (!repoUrl.endsWith('/')) repoUrl += '/'
-
-      if (repoUrl.split('/').length < 6) repoUrl = `${repoUrl}main/`
-
-      try {
-        const [user, repo] = repoUrl.split('/').slice(-4, -2)
-        repoUrl = `https://github.com/${user}/${repo}`
-      } catch (error) {
-        return
-      }
+  if (repoUrl?.includes('raw.githubusercontent.com')) {
+    try {
+      const rawUrl = new URL(repoUrl)
+      const [user, repo] = rawUrl.pathname.split('/').filter(Boolean)
+      if (user && repo) repoUrl = `https://github.com/${user}/${repo}`
+    } catch {
+      return
     }
-  } else {
+  }
+  if (!repoUrl) {
     repoUrl = props.plugin?.author_url
   }
   window.open(repoUrl, '_blank')
@@ -136,6 +129,8 @@ async function installPlugin(releaseVersion?: string, repoUrl?: string) {
     if (!isConfirmed) return
   }
 
+  const failureMessageKey = isInstalled.value ? 'plugin.updateFailed' : 'plugin.installFailed'
+
   try {
     showInstallProgress(
       isInstalled.value && !releaseVersion
@@ -146,15 +141,13 @@ async function installPlugin(releaseVersion?: string, repoUrl?: string) {
           }),
     )
 
-    const result: { [key: string]: any } = await api.get(`plugin/install/${props.plugin?.id}`, {
+    const result: ApiResponse<unknown> = await api.get(`plugin/install/${props.plugin?.id}`, {
       params: {
         repo_url: repoUrl || props.plugin?.repo_url,
         release_version: releaseVersion,
-        force: props.plugin?.has_update || Boolean(releaseVersion),
+        force: isInstalled.value || props.plugin?.has_update || Boolean(releaseVersion),
       },
     })
-
-    closeInstallProgress()
 
     if (result.success) {
       $toast.success(
@@ -167,11 +160,18 @@ async function installPlugin(releaseVersion?: string, repoUrl?: string) {
       visible.value = false
       emit('install')
     } else {
-      $toast.error(t('plugin.installFailed', { name: props.plugin?.plugin_name, message: result.message }))
+      $toast.error(t(failureMessageKey, { name: props.plugin?.plugin_name, message: result.message }))
     }
   } catch (error) {
-    closeInstallProgress()
+    $toast.error(
+      t(failureMessageKey, {
+        name: props.plugin?.plugin_name,
+        message: t('common.serverConnectionFailed'),
+      }),
+    )
     console.error(error)
+  } finally {
+    closeInstallProgress()
   }
 }
 
@@ -220,6 +220,7 @@ async function submitPluginRating() {
     if (result.success) {
       rating.value = result.data
       selectedRating.value = result.data.user_rating || selectedRating.value
+      emit('rating', result.data)
       $toast.success(t('plugin.ratingSuccess', { name: props.plugin?.plugin_name }))
     } else {
       $toast.error(t('plugin.ratingFailed', { message: result.message || t('common.unknown') }))
@@ -247,190 +248,263 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <VDialog v-if="visible" v-model="visible" max-width="30rem">
-    <VCard>
+  <VDialog v-if="visible" v-model="visible" width="100%" max-width="25rem" max-height="90dvh" scrollable>
+    <VCard class="plugin-market-detail">
       <VDialogCloseBtn v-model="visible" />
-      <VCardText>
-        <VCol>
-          <div class="d-flex justify-space-between flex-wrap flex-md-nowrap flex-column flex-md-row">
-            <div class="mx-auto mt-5">
-              <VAvatar size="64">
-                <VImg ref="imageRef" :src="pluginIconPath()" aspect-ratio="4/3" cover @error="imageLoadError = true" />
-              </VAvatar>
-            </div>
-            <div class="flex-grow">
-              <VCardItem>
-                <VCardTitle class="text-center text-md-left">
-                  {{ props.plugin?.plugin_name }}
-                </VCardTitle>
-                <VCardSubtitle
-                  class="text-center text-md-left break-words whitespace-break-spaces line-clamp-4 overflow-hidden text-ellipsis ..."
-                >
-                  {{ props.plugin?.plugin_desc }}
-                </VCardSubtitle>
-                <VList lines="one" class="border-0">
-                  <VListItem class="ps-0">
-                    <VListItemTitle class="text-center text-md-left">
-                      <span class="font-weight-medium">{{ t('common.version') }}：</span>
-                      <span class="text-body-1"> v{{ props.plugin?.plugin_version }}</span>
-                    </VListItemTitle>
-                  </VListItem>
-                  <VListItem class="ps-0">
-                    <VListItemTitle class="text-center text-md-left">
-                      <span class="font-weight-medium">{{ t('common.author') }}：</span>
-                      <span class="text-body-1 cursor-pointer" @click="visitPluginPage">
-                        {{ props.plugin?.plugin_author }}
-                      </span>
-                    </VListItemTitle>
-                  </VListItem>
-                  <VListItem v-if="props.plugin?.system_version" class="ps-0">
-                    <VListItemTitle class="text-center text-md-left">
-                      <span class="font-weight-medium">{{ t('plugin.systemVersion') }}：</span>
-                      <span class="text-body-1">{{ props.plugin?.system_version }}</span>
-                    </VListItemTitle>
-                  </VListItem>
-                  <VListItem v-if="rating.rating_count > 0" class="ps-0">
-                    <VListItemTitle class="plugin-market-detail-rating-row text-center text-md-left">
-                      <span class="font-weight-medium">{{ t('plugin.rating') }}：</span>
-                      <PluginRatingDisplay
-                        :rating="rating.average_rating"
-                        :count="rating.rating_count"
-                        :icon-size="18"
-                      />
-                    </VListItemTitle>
-                  </VListItem>
-                </VList>
-                <VAlert
-                  v-if="props.plugin?.system_version_compatible === false"
-                  type="warning"
-                  variant="tonal"
-                  density="compact"
-                  class="mb-3"
-                  :text="props.plugin?.system_version_message || t('plugin.incompatibleSystemVersion')"
-                />
-                <div class="plugin-market-detail-actions">
-                  <div class="plugin-market-detail-actions__buttons">
-                    <VBtn
-                      v-if="!isInstalled"
-                      color="primary"
-                      @click="installPlugin()"
-                      prepend-icon="mdi-download"
-                      :disabled="props.plugin?.system_version_compatible === false"
-                    >
-                      {{ t('plugin.installToLocal') }}
-                    </VBtn>
-                    <VBtn
-                      v-else-if="props.plugin?.has_update"
-                      color="primary"
-                      prepend-icon="mdi-arrow-up-circle-outline"
-                      :disabled="props.plugin?.system_version_compatible === false"
-                      @click="installPlugin()"
-                    >
-                      {{ t('plugin.update') }}
-                    </VBtn>
-                    <VBtn variant="tonal" @click="showUpdateHistory" prepend-icon="mdi-update">
-                      {{ t('plugin.versionHistory') }}
-                    </VBtn>
-                  </div>
-                  <div class="plugin-market-detail-actions__downloads" v-if="props.count">
-                    <VIcon icon="mdi-fire" />
-                    {{ t('plugin.totalDownloads', { count: formatDownloadCount(props.count) }) }}
-                  </div>
-                </div>
-                <div v-if="isInstalled" class="plugin-market-detail-user-rating mt-5">
-                  <div class="text-body-2 font-weight-medium mb-2">
-                    {{ t('plugin.yourRating') }}
-                  </div>
-                  <div class="plugin-market-detail-user-rating__controls">
-                    <VRating
-                      v-model="selectedRating"
-                      :disabled="ratingLoading || ratingSubmitting"
-                      half-increments
-                      hover
-                      density="compact"
-                      active-color="warning"
-                    />
-                    <VBtn
-                      size="small"
-                      variant="tonal"
-                      prepend-icon="mdi-star-check-outline"
-                      :loading="ratingSubmitting"
-                      :disabled="ratingLoading || selectedRating <= 0"
-                      @click="submitPluginRating"
-                    >
-                      {{ t('plugin.submitRating') }}
-                    </VBtn>
-                  </div>
-                </div>
-              </VCardItem>
-            </div>
+      <VCardText class="plugin-market-detail__content">
+        <header class="plugin-market-detail__header">
+          <VAvatar size="64" class="plugin-market-detail__avatar">
+            <VImg :src="pluginIconPath()" aspect-ratio="4/3" cover @error="imageLoadError = true" />
+          </VAvatar>
+          <h2 class="plugin-market-detail__title">
+            {{ props.plugin?.plugin_name }}
+          </h2>
+          <p v-if="props.plugin?.plugin_desc" class="plugin-market-detail__description">
+            {{ props.plugin?.plugin_desc }}
+          </p>
+          <div v-if="rating.rating_count > 0" class="plugin-market-detail__header-rating">
+            <PluginRatingDisplay :rating="rating.average_rating" :count="rating.rating_count" :icon-size="18" />
           </div>
-        </VCol>
+        </header>
+
+        <dl class="plugin-market-detail__metadata">
+          <div class="plugin-market-detail__metadata-row">
+            <dt>{{ t('common.version') }}：</dt>
+            <dd>v{{ props.plugin?.plugin_version }}</dd>
+          </div>
+          <div class="plugin-market-detail__metadata-row">
+            <dt>{{ t('common.author') }}：</dt>
+            <dd>
+              <button type="button" class="plugin-market-detail__author" @click="visitPluginPage">
+                {{ props.plugin?.plugin_author }}
+              </button>
+            </dd>
+          </div>
+        </dl>
+
+        <VAlert
+          v-if="props.plugin?.system_version_compatible === false"
+          type="warning"
+          variant="tonal"
+          density="compact"
+          class="plugin-market-detail__warning"
+          :text="props.plugin?.system_version_message || t('plugin.incompatibleSystemVersion')"
+        />
+
+        <div class="plugin-market-detail-actions">
+          <div class="plugin-market-detail-actions__buttons">
+            <VBtn
+              v-if="!isInstalled"
+              color="primary"
+              prepend-icon="mdi-download"
+              :disabled="props.plugin?.system_version_compatible === false"
+              @click="installPlugin()"
+            >
+              {{ t('plugin.installToLocal') }}
+            </VBtn>
+            <VBtn
+              v-else-if="props.plugin?.has_update"
+              color="primary"
+              prepend-icon="mdi-arrow-up-circle-outline"
+              :disabled="props.plugin?.system_version_compatible === false"
+              @click="installPlugin()"
+            >
+              {{ t('plugin.update') }}
+            </VBtn>
+            <VBtn variant="tonal" prepend-icon="mdi-update" @click="showUpdateHistory">
+              {{ t('plugin.versionHistory') }}
+            </VBtn>
+          </div>
+          <div v-if="props.count" class="plugin-market-detail-actions__downloads">
+            <VIcon icon="mdi-fire" size="18" />
+            <span>{{ t('plugin.totalDownloads', { count: formatDownloadCount(props.count) }) }}</span>
+          </div>
+        </div>
+
+        <section v-if="isInstalled" class="plugin-market-detail-user-rating">
+          <h3 class="plugin-market-detail-user-rating__title">
+            {{ t('plugin.yourRating') }}
+          </h3>
+          <div class="plugin-market-detail-user-rating__controls">
+            <VRating
+              v-model="selectedRating"
+              :disabled="ratingLoading || ratingSubmitting"
+              half-increments
+              hover
+              density="compact"
+              active-color="warning"
+            />
+            <VBtn
+              size="small"
+              variant="tonal"
+              prepend-icon="mdi-star-check-outline"
+              :loading="ratingSubmitting"
+              :disabled="ratingLoading || selectedRating <= 0"
+              @click="submitPluginRating"
+            >
+              {{ t('plugin.submitRating') }}
+            </VBtn>
+          </div>
+        </section>
       </VCardText>
     </VCard>
   </VDialog>
 </template>
 
 <style scoped>
-.plugin-market-detail-actions {
+.plugin-market-detail__content {
+  padding: 1.75rem 1.25rem 1.25rem;
+}
+
+.plugin-market-detail__header {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.plugin-market-detail__avatar {
+  flex: 0 0 auto;
+}
+
+.plugin-market-detail__title {
+  max-inline-size: 100%;
+  margin: 0.75rem 0 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.plugin-market-detail__description {
+  max-inline-size: 24rem;
+  margin: 0.25rem 0 0;
+  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  font-size: 0.875rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.plugin-market-detail__header-rating {
+  display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.75rem;
+  margin-block: 0.75rem 0.375rem;
+}
+
+.plugin-market-detail__metadata {
+  display: grid;
+  gap: 0.625rem;
+  margin: 1.125rem 0;
+}
+
+.plugin-market-detail__metadata-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 0.625rem;
+  min-inline-size: 0;
+}
+
+.plugin-market-detail__metadata dt {
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: end;
+  white-space: nowrap;
+}
+
+.plugin-market-detail__metadata dd {
+  min-inline-size: 0;
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  text-align: start;
+}
+
+.plugin-market-detail__author {
+  max-inline-size: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  overflow-wrap: anywhere;
+  text-align: start;
+}
+
+.plugin-market-detail__author:hover,
+.plugin-market-detail__author:focus-visible {
+  color: rgb(var(--v-theme-primary));
+  text-decoration: underline;
+}
+
+.plugin-market-detail__warning {
+  margin-block-start: 1rem;
+}
+
+.plugin-market-detail-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  margin-block-start: 1rem;
 }
 
 .plugin-market-detail-actions__buttons {
-  /* 窄屏换行时用统一 gap 控制按钮间距，避免第二个按钮带左边距导致视觉偏移。 */
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   gap: 0.5rem;
+  inline-size: 100%;
 }
 
 .plugin-market-detail-actions__downloads {
-  flex-basis: 100%;
-  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  font-size: 0.75rem;
-  text-align: center;
-}
-
-.plugin-market-detail-rating-row {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.25rem;
-  flex-wrap: wrap;
-  white-space: normal;
+  gap: 0.3rem;
+  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  font-size: 0.75rem;
+  line-height: 1.4;
 }
 
 .plugin-market-detail-user-rating {
+  margin-block-start: 1.25rem;
   padding-block-start: 1rem;
   border-block-start: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 
-.plugin-market-detail-user-rating__controls {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  flex-wrap: wrap;
+.plugin-market-detail-user-rating__title {
+  margin: 0 0 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: center;
 }
 
-@media (width >= 960px) {
-  .plugin-market-detail-actions {
-    justify-content: flex-start;
+.plugin-market-detail-user-rating__controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  min-inline-size: 0;
+}
+
+@media (width < 360px) {
+  .plugin-market-detail__content {
+    padding-inline: 1rem;
   }
 
   .plugin-market-detail-actions__buttons {
-    justify-content: flex-start;
+    flex-direction: column;
   }
 
-  .plugin-market-detail-actions__downloads {
-    text-align: start;
-  }
-
-  .plugin-market-detail-rating-row {
-    justify-content: flex-start;
+  .plugin-market-detail-actions__buttons :deep(.v-btn) {
+    inline-size: 100%;
   }
 }
 </style>

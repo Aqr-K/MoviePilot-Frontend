@@ -136,7 +136,7 @@ onActivated(() => {
     </template>
   </DashboardMediaState>
 
-  <VCard v-else class="dashboard-media-card dashboard-grid-fill">
+  <VCard v-else class="dashboard-media-card dashboard-grid-fill" data-glass-optical-boundary>
     <VCardItem class="dashboard-media-header">
       <VCardTitle>{{ t('dashboard.library') }}</VCardTitle>
       <template v-if="loadFailed" #append>
@@ -185,9 +185,12 @@ onActivated(() => {
   flex-direction: column;
   min-block-size: 0;
   overflow: auto;
+  scrollbar-width: none;
 }
 
-.dashboard-media-content::-webkit-scrollbar {
-  display: none;
+@supports not (scrollbar-width: none) {
+  .dashboard-media-content::-webkit-scrollbar {
+    display: none;
+  }
 }
 </style>

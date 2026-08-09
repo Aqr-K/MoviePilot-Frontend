@@ -25,10 +25,32 @@ const packageJson = JSON.parse(readFileSync('./package.json', 'utf-8'))
 const buildTime = new Date().getTime().toString()
 const isTestMode = (mode: string) => mode === 'test' || process.env.VITEST === 'true'
 
+/** 仅为单测提供可 mock 的 virtual federation 模块，不启用生产 federation 插件。 */
+function federationRuntimeTestModule() {
+  const moduleId = 'virtual:__federation__'
+  const resolvedModuleId = `\0${moduleId}`
+
+  return {
+    name: 'moviepilot-federation-runtime-test-module',
+    resolveId(source: string) {
+      if (source === moduleId) return resolvedModuleId
+    },
+    load(id: string) {
+      if (id !== resolvedModuleId) return
+      return `
+        export function __federation_method_getRemote() { throw new Error('Federation runtime must be mocked in tests') }
+        export function __federation_method_setRemote() { throw new Error('Federation runtime must be mocked in tests') }
+        export function __federation_method_unwrapDefault() { throw new Error('Federation runtime must be mocked in tests') }
+      `
+    },
+  }
+}
+
 // https://vitejs.dev/config/
 export default defineConfig(({ command, mode, isPreview }) => ({
   base: './',
   plugins: [
+    isTestMode(mode) && federationRuntimeTestModule(),
     shouldEnableDevServiceWorkerCleanup(command, mode, isPreview, process.env.npm_lifecycle_event) &&
       createDevServiceWorkerCleanupPlugin(),
     vue(),
@@ -284,9 +306,14 @@ export default defineConfig(({ command, mode, isPreview }) => ({
       include: [
         'src/utils/recommendSources.ts',
         'src/utils/permission.ts',
+        'src/utils/pluginSidebarNav.ts',
         'src/utils/requestOptimizer.ts',
         'src/utils/sseManager.ts',
+        'src/utils/federationLoader.ts',
+        'src/utils/federationRuntime.ts',
         'src/stores/auth.ts',
+        'src/stores/pluginSidebarNav.ts',
+        'src/pages/appcenter.vue',
         'src/pages/recommend.vue',
         'src/pages/discover.vue',
         'src/pages/browse.vue',
@@ -294,6 +321,7 @@ export default defineConfig(({ command, mode, isPreview }) => ({
         'src/pages/resource.vue',
         'src/pages/site.vue',
         'src/pages/subscribe.vue',
+        'src/pages/plugin-app.vue',
         'src/views/dashboard/MediaRecommend.vue',
         'src/views/discover/MediaCardSlideView.vue',
         'src/views/subscribe/FullCalendarView.vue',
@@ -318,6 +346,7 @@ export default defineConfig(({ command, mode, isPreview }) => ({
         'src/components/dialog/SubscribeSeasonDialog.vue',
         'src/components/dialog/SubscribeShareDialog.vue',
         'src/components/dialog/SubscribeShareStatisticsDialog.vue',
+        'src/components/filebrowser/FileList.vue',
         'src/components/dialog/DiscoverTabOrderDialog.vue',
         'src/components/dialog/SiteResourceDialog.vue',
         'src/components/dialog/SiteUserDataDialog.vue',
@@ -325,6 +354,8 @@ export default defineConfig(({ command, mode, isPreview }) => ({
         'src/components/dialog/AddSubtitleDownloadDialog.vue',
         'src/components/dialog/ReorganizeDialog.vue',
         'src/components/dialog/TransferQueueDialog.vue',
+        'src/components/dialog/PluginConfigDialog.vue',
+        'src/components/dialog/PluginDataDialog.vue',
         'src/views/reorganize/FileBrowserView.vue',
         'src/components/filebrowser/FileBrowser.vue',
         'src/components/filebrowser/FileToolbar.vue',
@@ -338,6 +369,11 @@ export default defineConfig(({ command, mode, isPreview }) => ({
         'src/components/cards/MediaCard.vue',
         'src/components/cards/SiteCard.vue',
         'src/components/cards/DownloadingCard.vue',
+        'src/components/cards/PluginFolderCard.vue',
+        'src/components/cards/PluginCard.vue',
+        'src/components/cards/PluginAppCard.vue',
+        'src/components/dialog/PluginMarketDetailDialog.vue',
+        'src/components/dialog/PluginVersionHistoryDialog.vue',
         'src/components/slide/VirtualSlideView.vue',
         'src/views/discover/PersonCardSlideView.vue',
         'src/views/reorganize/TransferHistoryView.vue',
@@ -345,6 +381,7 @@ export default defineConfig(({ command, mode, isPreview }) => ({
         'src/utils/searchStream.ts',
         'src/views/site/SiteCardListView.vue',
         'src/views/reorganize/DownloadingListView.vue',
+        'src/views/plugin/PluginCardListView.vue',
         'src/utils/siteIconCache.ts',
       ],
       provider: 'v8',
@@ -373,6 +410,42 @@ export default defineConfig(({ command, mode, isPreview }) => ({
           lines: 80,
           statements: 80,
         },
+        'src/components/cards/PluginFolderCard.vue': {
+          branches: 80,
+          functions: 85,
+          lines: 85,
+          statements: 85,
+        },
+        'src/views/plugin/PluginCardListView.vue': {
+          branches: 75,
+          functions: 80,
+          lines: 80,
+          statements: 80,
+        },
+        'src/components/cards/PluginCard.vue': {
+          branches: 75,
+          functions: 80,
+          lines: 80,
+          statements: 80,
+        },
+        'src/components/cards/PluginAppCard.vue': {
+          branches: 80,
+          functions: 85,
+          lines: 85,
+          statements: 85,
+        },
+        'src/components/dialog/PluginMarketDetailDialog.vue': {
+          branches: 80,
+          functions: 85,
+          lines: 85,
+          statements: 85,
+        },
+        'src/components/dialog/PluginVersionHistoryDialog.vue': {
+          branches: 80,
+          functions: 85,
+          lines: 85,
+          statements: 85,
+        },
         'src/views/reorganize/FileBrowserView.vue': {
           branches: 80,
           functions: 85,
@@ -396,6 +469,12 @@ export default defineConfig(({ command, mode, isPreview }) => ({
           functions: 85,
           lines: 85,
           statements: 85,
+        },
+        'src/components/filebrowser/FileList.vue': {
+          branches: 75,
+          functions: 80,
+          lines: 80,
+          statements: 80,
         },
         'src/utils/torrentDownloadCache.ts': {
           branches: 85,
@@ -481,6 +560,18 @@ export default defineConfig(({ command, mode, isPreview }) => ({
           lines: 85,
           statements: 85,
         },
+        'src/components/dialog/PluginConfigDialog.vue': {
+          branches: 80,
+          functions: 85,
+          lines: 85,
+          statements: 85,
+        },
+        'src/components/dialog/PluginDataDialog.vue': {
+          branches: 80,
+          functions: 85,
+          lines: 85,
+          statements: 85,
+        },
         'src/composables/useMediaSubscribe.ts': {
           branches: 75,
           functions: 80,
@@ -535,11 +626,29 @@ export default defineConfig(({ command, mode, isPreview }) => ({
           lines: 80,
           statements: 80,
         },
+        'src/stores/pluginSidebarNav.ts': {
+          branches: 85,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/pages/appcenter.vue': {
+          branches: 80,
+          functions: 85,
+          lines: 85,
+          statements: 85,
+        },
         'src/utils/permission.ts': {
           branches: 75,
           functions: 80,
           lines: 80,
           statements: 80,
+        },
+        'src/utils/pluginSidebarNav.ts': {
+          branches: 85,
+          functions: 90,
+          lines: 90,
+          statements: 90,
         },
         'src/utils/recommendSources.ts': {
           branches: 75,
@@ -558,6 +667,24 @@ export default defineConfig(({ command, mode, isPreview }) => ({
           functions: 90,
           lines: 90,
           statements: 90,
+        },
+        'src/utils/federationLoader.ts': {
+          branches: 85,
+          functions: 90,
+          lines: 90,
+          statements: 90,
+        },
+        'src/utils/federationRuntime.ts': {
+          branches: 100,
+          functions: 100,
+          lines: 100,
+          statements: 100,
+        },
+        'src/pages/plugin-app.vue': {
+          branches: 80,
+          functions: 85,
+          lines: 85,
+          statements: 85,
         },
         'src/utils/searchStream.ts': {
           branches: 85,

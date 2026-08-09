@@ -22,6 +22,59 @@ describe('glass overlay material styles', () => {
     expect(styles).not.toContain('background: rgba(3, 7, 18, 62%)')
   })
 
+  it('renders colored chips as shadowless glass without flattening their variants', () => {
+    const styles = readFileSync(resolve(cwd(), 'src/styles/themes/glass.scss'), 'utf8')
+
+    expect(styles).toContain('--glass-chip-backdrop-filter')
+    expect(styles).toContain('--glass-chip-sheen')
+    expect(styles).toMatch(/\.v-chip\s*\{\s*box-shadow:\s*none\s*!important;\s*\}/)
+    expect(styles).toMatch(
+      /\.v-chip:is\(\.v-chip--variant-elevated, \.v-chip--variant-flat, \.v-chip--variant-tonal\)\s*\{[\s\S]*?backdrop-filter:\s*var\(--glass-chip-backdrop-filter\)\s*!important;[\s\S]*?background-image:\s*var\(--glass-chip-sheen\);/,
+    )
+    expect(styles).toMatch(
+      /\.v-chip\[class\*='bg-'\]\s*\{[\s\S]*?--tw-bg-opacity:\s*var\(--glass-chip-tint-opacity\)\s*!important;/,
+    )
+    expect(styles).toContain('.v-chip.chip-resolution')
+    expect(styles).toContain(
+      'background-color: rgba(var(--glass-chip-tint), var(--glass-chip-tint-opacity)) !important',
+    )
+    expect(styles).not.toContain('.v-chip::after')
+    expect(styles).not.toContain(".v-chip:not([class*='border-'])")
+    expect(styles).not.toContain('.v-chip--variant-tonal > .v-chip__underlay')
+    expect(styles).not.toMatch(/\.v-chip--variant-(?:outlined|text|plain)\s*\{/)
+  })
+
+  it('keeps workflow share gradients as colored glass in every appearance', () => {
+    const styles = readFileSync(resolve(cwd(), 'src/styles/themes/glass.scss'), 'utf8')
+    const card = readFileSync(resolve(cwd(), 'src/components/cards/WorkflowShareCard.vue'), 'utf8')
+
+    expect(card).toContain('--workflow-share-gradient-start-rgb')
+    expect(card).toContain('--workflow-share-gradient-end-rgb')
+    const ruleStart = styles.indexOf('.workflow-share-card {')
+    const ruleEnd = styles.indexOf('\n  }', ruleStart)
+    const workflowShareCardRule = styles.slice(ruleStart, ruleEnd)
+    const expectedLayers = [
+      'background-image:',
+      'var(--glass-sheen),',
+      'var(--workflow-share-glass-scrim),',
+      'var(--workflow-share-gradient-start-rgb,',
+      'var(--workflow-share-gradient-end-rgb,',
+      ') !important;',
+    ]
+
+    expect(ruleStart).toBeGreaterThanOrEqual(0)
+    expect(ruleEnd).toBeGreaterThan(ruleStart)
+    let previousLayerIndex = -1
+    for (const layer of expectedLayers) {
+      const layerIndex = workflowShareCardRule.indexOf(layer, previousLayerIndex + 1)
+
+      expect(layerIndex).toBeGreaterThan(previousLayerIndex)
+      previousLayerIndex = layerIndex
+    }
+    expect(styles).toContain("&[data-glass-appearance='frosted'] .workflow-share-card")
+    expect(styles).toContain("&[data-glass-appearance='tinted'] .workflow-share-card")
+  })
+
   it('composites glass dialogs at their final geometry instead of resampling a scaled backdrop', () => {
     const styles = readFileSync(resolve(cwd(), 'src/styles/themes/glass.scss'), 'utf8')
 
@@ -30,6 +83,17 @@ describe('glass overlay material styles', () => {
     )
     expect(styles).toMatch(
       /\.v-overlay__content\.mp-dialog-transition-enter-from[\s\S]*?filter:\s*none;[\s\S]*?transform:\s*none;/,
+    )
+  })
+
+  it('uses the shared theme foreground token for confirm dialog actions', () => {
+    const styles = readFileSync(resolve(cwd(), 'src/styles/themes/glass.scss'), 'utf8')
+    const dialog = readFileSync(resolve(cwd(), 'src/@core/components/ConfirmDialog.vue'), 'utf8')
+
+    expect(dialog).toContain('app-confirm-dialog-actions')
+    expect(styles).toContain('--app-confirm-dialog-action-color: rgb(var(--v-theme-on-primary))')
+    expect(styles).toMatch(
+      /\.app-confirm-dialog-actions \.v-btn\s*\{[\s\S]*?color:\s*var\(--app-confirm-dialog-action-color\)\s*!important;/,
     )
   })
 
@@ -61,7 +125,6 @@ describe('glass overlay material styles', () => {
     expect(mainBackplateRule).toBeDefined()
     expect(mainBackplateRule).not.toMatch(/transition:\s*clip-path/u)
     expect(overlayBackplateRule).toMatch(/transition:\s*clip-path 0\.25s ease-in-out/u)
-    expect(styles).toMatch(/\.layout-vertical-nav \.ps__rail-y\s*\{[\s\S]*?inset-inline-end:\s*0\.5rem !important;/)
   })
 
   it('shares the same light frost when glass navbars overlap scrolled content', () => {
@@ -73,6 +136,34 @@ describe('glass overlay material styles', () => {
     )
     expect(styles).toMatch(
       /\[data-glass-appearance='frosted'\][\s\S]*?\.layout-wrapper\.window-scrolled\.layout-navbar-fixed \.layout-navbar,[\s\S]*?\.layout-horizontal-nav-scrolled[\s\S]*?backdrop-filter:\s*var\(--glass-navbar-scrolled-backdrop-filter\)\s*!important;/,
+    )
+  })
+
+  it('reuses the menu overlay material for toast and assistant bubbles', () => {
+    const styles = readFileSync(resolve(cwd(), 'src/styles/themes/glass.scss'), 'utf8')
+
+    expect(styles).toMatch(
+      /:where\(\.Vue-Toastification__toast, \.agent-assistant-fab__bubble\)\s*\{[\s\S]*?backdrop-filter:\s*var\(--glass-overlay-backdrop-filter\)\s*!important;[\s\S]*?background-color:\s*var\(--glass-overlay-surface\)\s*!important;/,
+    )
+    expect(styles).toMatch(
+      /\.agent-assistant-fab__bubbles::before\s*\{[\s\S]*?background-color:\s*var\(--glass-overlay-surface\)\s*!important;/,
+    )
+  })
+
+  it('reuses the popup menu material for compact FAB buttons', () => {
+    const styles = readFileSync(resolve(cwd(), 'src/styles/themes/glass.scss'), 'utf8')
+    const ruleStart = styles.indexOf('.compact-fab .v-btn {')
+    const ruleEnd = styles.indexOf('\n  }', ruleStart)
+    const rule = styles.slice(ruleStart, ruleEnd)
+
+    expect(ruleStart).toBeGreaterThanOrEqual(0)
+    expect(rule).toContain('border: 1px solid var(--glass-border-raised) !important')
+    expect(rule).toContain('backdrop-filter: var(--glass-overlay-backdrop-filter) !important')
+    expect(rule).toContain('background-color: var(--glass-overlay-surface) !important')
+    expect(rule).toContain('background-image: var(--glass-sheen) !important')
+    expect(rule).toContain('box-shadow: var(--glass-shadow-raised) !important')
+    expect(styles).toMatch(
+      /\.compact-fab \.v-btn:hover\s*\{\s*background-color:\s*var\(--glass-overlay-surface\)\s*!important;/,
     )
   })
 

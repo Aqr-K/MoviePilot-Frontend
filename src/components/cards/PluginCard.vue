@@ -2,13 +2,14 @@
 import { useToast } from 'vue-toastification'
 import { useConfirm } from '@/composables/useConfirm'
 import api from '@/api'
-import type { Plugin } from '@/api/types'
+import type { ApiResponse, Plugin, PluginRating } from '@/api/types'
 import { getLogoUrl } from '@/utils/imageUtils'
 import { getCardAccentRgbFromImage } from '@/composables/useCardAccentColor'
 import { formatDownloadCount } from '@/@core/utils/formatters'
 import { useDisplay } from 'vuetify'
 import { useI18n } from 'vue-i18n'
 import { openSharedDialog } from '@/composables/useSharedDialog'
+import { usePluginSidebarNavStore } from '@/stores/pluginSidebarNav'
 
 // 插件日志面板只有点击“查看日志”时才需要，延后加载可减轻插件列表首屏。
 const PluginConfigDialog = defineAsyncComponent(() => import('../dialog/PluginConfigDialog.vue'))
@@ -33,10 +34,20 @@ const props = defineProps({
 })
 
 // 定义触发的自定义事件
-const emit = defineEmits(['remove', 'save', 'actionDone'])
+const emit = defineEmits(['remove', 'save', 'actionDone', 'rating'])
 
 // 多语言
 const { t } = useI18n()
+
+const hasCardRating = computed(() => (props.plugin?.rating_count || 0) > 0)
+const hasCardStatus = computed(() => Boolean(props.plugin?.has_update) || hasCardRating.value)
+const cardRatingValue = computed(() => Number(props.plugin?.average_rating || 0).toFixed(1))
+const cardRatingSummary = computed(() =>
+  t('plugin.ratingSummary', {
+    rating: cardRatingValue.value,
+    count: props.plugin?.rating_count || 0,
+  }),
+)
 
 // 显示器宽度
 const display = useDisplay()
@@ -45,10 +56,12 @@ const display = useDisplay()
 const accentRgb = ref('40, 169, 225')
 
 // 图片对象
-const imageRef = ref<any>()
+const imageRef = ref<{ $el: HTMLElement } | null>(null)
 
 // 提示框
 const $toast = useToast()
+
+const pluginSidebarNavStore = usePluginSidebarNavStore()
 
 // 确认框
 const createConfirm = useConfirm()
@@ -61,9 +74,6 @@ const menuVisible = ref(false)
 
 // 用户头像是否加载完成
 const isAvatarLoaded = ref(false)
-
-// 图片是否加载完成
-const isImageLoaded = ref(false)
 
 // 图片是否加载失败
 const imageLoadError = ref(false)
@@ -98,7 +108,6 @@ watch(
 
 // 图片加载完成
 async function imageLoaded() {
-  isImageLoaded.value = true
   const imageElement = imageRef.value?.$el.querySelector('img') as HTMLImageElement
   // 从图标中提取主色，作为卡片头部染色玻璃的色相来源
   accentRgb.value = await getCardAccentRgbFromImage(imageElement, '#28A9E1')
@@ -124,17 +133,15 @@ async function uninstallPlugin() {
 
   if (!isConfirmed) return
 
+  showPluginProgress(t('plugin.uninstalling', { name: props.plugin?.plugin_name }))
   try {
-    // 显示等待提示框
-    showPluginProgress(t('plugin.uninstalling', { name: props.plugin?.plugin_name }))
-    const result: { [key: string]: any } = await api.delete(`plugin/${props.plugin?.id}`)
-    // 隐藏等待提示框
-    closePluginProgress()
+    const result: ApiResponse<unknown> = await api.delete(`plugin/${props.plugin?.id}`)
     if (result.success) {
       $toast.success(t('plugin.uninstallSuccess', { name: props.plugin?.plugin_name }))
 
-      // 通知父组件刷新
       emit('remove')
+      // 生命周期成功后刷新动态导航。
+      void pluginSidebarNavStore.ensureSidebarNav(true)
     } else {
       $toast.error(
         t('plugin.uninstallFailed', {
@@ -144,8 +151,15 @@ async function uninstallPlugin() {
       )
     }
   } catch (error) {
-    closePluginProgress()
+    $toast.error(
+      t('plugin.uninstallFailed', {
+        name: props.plugin?.plugin_name,
+        message: t('common.serverConnectionFailed'),
+      }),
+    )
     console.error(error)
+  } finally {
+    closePluginProgress()
   }
 }
 
@@ -204,11 +218,12 @@ async function resetPlugin() {
   if (!isConfirmed) return
 
   try {
-    const result: { [key: string]: any } = await api.get(`plugin/reset/${props.plugin?.id}`)
+    const result: ApiResponse<unknown> = await api.get(`plugin/reset/${props.plugin?.id}`)
     if (result.success) {
       $toast.success(t('plugin.resetSuccess', { name: props.plugin?.plugin_name }))
-      // 通知父组件刷新
       emit('save')
+      // 生命周期成功后刷新动态导航。
+      void pluginSidebarNavStore.ensureSidebarNav(true)
     } else {
       $toast.error(
         t('plugin.resetFailed', {
@@ -218,6 +233,12 @@ async function resetPlugin() {
       )
     }
   } catch (error) {
+    $toast.error(
+      t('plugin.resetFailed', {
+        name: props.plugin?.plugin_name,
+        message: t('common.serverConnectionFailed'),
+      }),
+    )
     console.error(error)
   }
 }
@@ -243,14 +264,13 @@ async function updatePlugin(releaseVersion?: string, repoUrl?: string) {
   }
 
   try {
-    // 显示等待提示框
     showPluginProgress(
       releaseVersion
         ? t('plugin.installing', { name: props.plugin?.plugin_name, version: releaseVersion })
         : t('plugin.updating', { name: props.plugin?.plugin_name }),
     )
 
-    const result: { [key: string]: any } = await api.get(`plugin/install/${props.plugin?.id}`, {
+    const result: ApiResponse<unknown> = await api.get(`plugin/install/${props.plugin?.id}`, {
       params: {
         repo_url: repoUrl || props.plugin?.repo_url,
         release_version: releaseVersion,
@@ -258,16 +278,14 @@ async function updatePlugin(releaseVersion?: string, repoUrl?: string) {
       },
     })
 
-    // 隐藏等待提示框
-    closePluginProgress()
-
     if (result.success) {
       $toast.success(t('plugin.updateSuccess', { name: props.plugin?.plugin_name }))
       versionHistoryDialogController?.close()
       versionHistoryDialogController = null
 
-      // 通知父组件刷新
       emit('save')
+      // 生命周期成功后刷新动态导航。
+      void pluginSidebarNavStore.ensureSidebarNav(true)
     } else {
       $toast.error(
         t('plugin.updateFailed', {
@@ -277,8 +295,15 @@ async function updatePlugin(releaseVersion?: string, repoUrl?: string) {
       )
     }
   } catch (error) {
-    closePluginProgress()
+    $toast.error(
+      t('plugin.updateFailed', {
+        name: props.plugin?.plugin_name,
+        message: t('common.serverConnectionFailed'),
+      }),
+    )
     console.error(error)
+  } finally {
+    closePluginProgress()
   }
 }
 
@@ -362,7 +387,12 @@ async function showPluginAbout() {
       count: props.count,
     },
     {
-      install: () => emit('save'),
+      install: () => {
+        emit('save')
+        // 详情弹窗的安装事件只刷新父列表，动态导航由卡片补充同步。
+        void pluginSidebarNavStore.ensureSidebarNav(true)
+      },
+      rating: (pluginRating: PluginRating) => emit('rating', pluginRating),
     },
     { closeOn: ['close', 'install', 'update:modelValue'] },
   )
@@ -445,7 +475,7 @@ async function executePluginClone(cloneForm: {
   try {
     showPluginProgress(t('plugin.cloning', { name: props.plugin?.plugin_name }))
 
-    const result: { [key: string]: any } = await api.post(`plugin/clone/${props.plugin?.id}`, {
+    const result: ApiResponse<unknown> = await api.post(`plugin/clone/${props.plugin?.id}`, {
       suffix: cloneForm.suffix.trim(),
       name: cloneForm.name.trim(),
       description: cloneForm.description.trim(),
@@ -453,21 +483,21 @@ async function executePluginClone(cloneForm: {
       icon: cloneForm.icon.trim(),
     })
 
-    closePluginProgress()
-
     if (result.success) {
       $toast.success(t('plugin.cloneSuccess', { name: cloneForm.name }))
       cloneDialogController?.close()
       cloneDialogController = null
-      // 通知父组件刷新
       emit('remove')
+      // 生命周期成功后刷新动态导航。
+      void pluginSidebarNavStore.ensureSidebarNav(true)
     } else {
       $toast.error(t('plugin.cloneFailed', { message: result.message }))
     }
   } catch (error) {
-    closePluginProgress()
     $toast.error(t('plugin.cloneFailedGeneral'))
     console.error(error)
+  } finally {
+    closePluginProgress()
   }
 }
 
@@ -581,7 +611,7 @@ const dropdownItems = ref([
 // 监听插件状态变化
 watch(
   () => props.plugin?.has_update,
-  (newHasUpdate, _) => {
+  newHasUpdate => {
     const updateItemIndex = dropdownItems.value.findIndex(item => item.value === 3)
     if (updateItemIndex !== -1) dropdownItems.value[updateItemIndex].show = newHasUpdate
 
@@ -593,7 +623,7 @@ watch(
 // 监听插件窗口状态变化
 watch(
   () => props.plugin?.page_open,
-  (newOpenState, _) => {
+  newOpenState => {
     if (newOpenState) openPluginDetail()
   },
   { immediate: true },
@@ -623,6 +653,7 @@ watch(
               <VCardText class="px-2 pt-2 pb-0">
                 <VCardTitle
                   class="text-white px-2 pb-0 text-lg text-shadow whitespace-nowrap overflow-hidden text-ellipsis"
+                  :class="{ 'plugin-card__title--with-status': hasCardStatus }"
                 >
                   <VBadge dot inline :color="props.plugin?.state ? 'success' : 'secondary'" />
                   {{ props.plugin?.plugin_name }}
@@ -695,15 +726,29 @@ watch(
                         <template #prepend>
                           <VIcon :icon="item.props.prependIcon" />
                         </template>
-                        <VListItemTitle v-text="item.title" />
+                        <VListItemTitle>{{ item.title }}</VListItemTitle>
                       </VListItem>
                     </VList>
                   </VMenu>
                 </IconBtn>
               </div>
             </VCardText>
-            <div v-if="props.plugin?.has_update" class="me-n3 absolute top-0 right-5">
-              <VIcon icon="mdi-new-box" class="text-white" />
+            <div
+              v-if="props.plugin?.has_update"
+              class="plugin-card__status plugin-card__status--update"
+              :aria-label="t('plugin.hasUpdate')"
+              :title="t('plugin.hasUpdate')"
+            >
+              <VIcon icon="mdi-new-box" class="text-white" size="20" />
+            </div>
+            <div
+              v-else-if="hasCardRating"
+              class="plugin-card__status plugin-card__status--rating"
+              :aria-label="cardRatingSummary"
+              :title="cardRatingSummary"
+            >
+              <VIcon icon="mdi-star" color="warning" size="16" />
+              <span>{{ cardRatingValue }}</span>
             </div>
           </VCard>
         </div>
@@ -715,6 +760,28 @@ watch(
 <style lang="scss" scoped>
 .plugin-card-hover-area {
   inline-size: 100%;
+}
+
+.plugin-card__title--with-status {
+  padding-inline-end: 4rem !important;
+}
+
+.plugin-card__status {
+  position: absolute;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  color: white;
+  inset-block-start: 0.625rem;
+  inset-inline-end: 0.625rem;
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 65%);
+}
+
+.plugin-card__status--rating {
+  gap: 0.125rem;
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 
 .card-cover-blurred::before {

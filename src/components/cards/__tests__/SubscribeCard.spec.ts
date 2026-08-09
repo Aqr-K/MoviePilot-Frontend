@@ -191,15 +191,17 @@ describe('SubscribeCard display and progress', () => {
       expect(progress.querySelector('.v-progress-linear__buffer')).toHaveStyle({ width: expectedWash ? '80%' : '0%' })
       expect(Boolean(container.querySelector('.best-version-badge'))).toBe(expectedWash)
       expect(Boolean(container.querySelector('.best-version-badge-full'))).toBe(expectedFull)
+      expect(container.querySelector('.subscribe-card')).not.toHaveClass('subscribe-card-best-version-tint')
     },
   )
 
   it('keeps mobile wash progress compact while preserving P, S, and R metadata', async () => {
     setViewport(480)
-    const { media, rerender } = await renderCard({
+    const { container, media, rerender } = await renderCard({
       best_version: true,
       completed_episode: 3,
       lack_episode: 2,
+      season: 1,
       state: 'P',
       total_episode: 10,
       type: '电视剧',
@@ -211,14 +213,41 @@ describe('SubscribeCard display and progress', () => {
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '30')
     expect(screen.getByText(lastUpdateText)).toBeInTheDocument()
     expect(document.querySelector('.subscribe-card-mobile-menu')).toBeInTheDocument()
+    expect(document.querySelector('.subscribe-card-mobile-media')).toContainElement(screen.getByText(/卡片测试媒体/))
+    expect(document.querySelector('.subscribe-card-mobile-image-meta__updated')).toHaveTextContent(lastUpdateText)
+    expect(document.querySelector('.subscribe-card-mobile-body')).not.toHaveTextContent('卡片测试媒体')
+    expect(document.querySelector('.subscribe-card-mobile-season')).toHaveTextContent('S01')
+    expect(document.querySelector('.subscribe-card-mobile-title-text')).toHaveTextContent('卡片测试媒体S01')
+    expect(document.querySelector('.subscribe-card-mobile-best-version-badge')).not.toBeInTheDocument()
+    expect(container.querySelector('.subscribe-card')).toHaveClass('subscribe-card-pending-tint')
+    expect(container.querySelector('.subscribe-card')).not.toHaveClass('subscribe-card-best-version-tint')
 
     await rerender({ media: { ...media, state: 'S' } })
     expect(screen.getByLabelText('已暂停')).toBeInTheDocument()
     expect(screen.getByText(lastUpdateText)).toBeInTheDocument()
+    expect(container.querySelector('.subscribe-card')).not.toHaveClass('subscribe-card-best-version-tint')
 
     await rerender({ media: { ...media, state: 'R' } })
     expect(screen.getByLabelText('订阅中')).toBeInTheDocument()
     expect(screen.getByText(lastUpdateText)).toBeInTheDocument()
+    expect(container.querySelector('.subscribe-card')).toHaveClass('subscribe-card-best-version-tint')
+  })
+
+  it('applies mobile wash visuals to movies without episode progress', async () => {
+    setViewport(480)
+    const { container } = await renderCard({
+      best_version: true,
+      state: 'R',
+      total_episode: undefined,
+      type: '电影',
+    })
+
+    expect(container.querySelector('.subscribe-card')).toHaveClass('subscribe-card-best-version-tint')
+    expect(container.querySelector('[data-subscribe-state-icon="mdi-shimmer"]')).toBeInTheDocument()
+    expect(container.querySelector('.subscribe-card-mobile-state')).toHaveStyle({
+      color: 'rgb(var(--v-theme-success))',
+    })
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
   })
 
   it('synchronizes desktop P, S, and R state from updated media props', async () => {

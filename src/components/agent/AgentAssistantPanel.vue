@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import MarkdownIt from 'markdown-it'
-import mdLinkAttributes from 'markdown-it-link-attributes'
 import { useDisplay } from 'vuetify'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore, useUserStore } from '@/stores'
 import { getCurrentLocale } from '@/plugins/i18n'
+import { AGENT_ASSISTANT_LAYER_Z_INDEX } from '@/constants/agentAssistant'
+import AgentMarkdownContent from './AgentMarkdownContent.vue'
 
 type AgentMessageRole = 'user' | 'assistant'
 type AgentMessageStatus = 'idle' | 'streaming' | 'done' | 'error'
@@ -18,6 +18,21 @@ interface AgentToolCall {
   message: string
   status: 'running' | 'done'
 }
+
+interface AgentMessageTextSegment {
+  type: 'text'
+  content: string
+}
+
+interface AgentMessageToolSegment {
+  type: 'tool'
+  toolIndex: number
+}
+
+type AgentMessageSegment = AgentMessageTextSegment | AgentMessageToolSegment
+
+type AgentRenderableMessageSegment =
+  (AgentMessageTextSegment & { key: string }) | { type: 'tool'; key: string; tool: AgentToolCall }
 
 interface AgentMessageAttachment {
   kind: AgentAttachmentKind
@@ -65,6 +80,7 @@ interface AgentChatMessage {
   createdAt: number
   status: AgentMessageStatus
   tools: AgentToolCall[]
+  segments: AgentMessageSegment[]
   attachments: AgentMessageAttachment[]
   choices: AgentChoiceCard[]
   choice_selection?: AgentChoiceSelection
@@ -129,6 +145,16 @@ interface AgentStreamMessageOptions {
   originalChatId?: string
 }
 
+interface AgentPendingStreamRecovery {
+  sessionId: string
+  startedAt: number
+  attempts: number
+}
+
+interface AgentStreamReadResult {
+  receivedTerminalEvent: boolean
+}
+
 interface AgentSlashCommand {
   command: string
   description: string
@@ -188,6 +214,7 @@ const messages = ref<AgentChatMessage[]>([])
 const historySessions = ref<AgentSessionHistoryItem[]>([])
 const sessionId = ref('')
 const sending = ref(false)
+const isComposing = ref(false)
 const streamError = ref('')
 const historyMenuOpen = ref(false)
 const messageListRef = ref<HTMLElement | null>(null)
@@ -204,6 +231,7 @@ const historyHasMore = ref(true)
 const slashCommands = ref<AgentSlashCommand[]>([])
 const slashCommandsLoading = ref(false)
 const slashCommandsLoaded = ref(false)
+const pendingStreamRecovery = ref<AgentPendingStreamRecovery | null>(null)
 let abortController: AbortController | null = null
 let mediaRecorder: MediaRecorder | null = null
 let mediaRecorderStream: MediaStream | null = null
@@ -212,33 +240,22 @@ let recordingChunks: BlobPart[] = []
 let messageScrollFrame: number | null = null
 let pendingMessageScrollToBottom = false
 let streamPersistTimer: number | null = null
+let streamPersistLastRunAt = 0
+let messageScrollerShouldFollow = true
+let streamDeltaFrame: number | null = null
+let pendingStreamDelta = ''
+let pendingStreamDeltaMessage: AgentChatMessage | null = null
 let userAbortRequested = false
+let streamRecoveryAbortRequested = false
 let streamRecoveryTimer: number | null = null
-let pendingStreamRecovery: {
-  sessionId: string
-  startedAt: number
-  attempts: number
-} | null = null
+let activeStreamStartedAt = 0
 
-const md = new MarkdownIt({
-  html: true,
-  breaks: true,
-  linkify: true,
-  typographer: true,
-})
-
-md.use(mdLinkAttributes, {
-  attrs: {
-    target: '_blank',
-    rel: 'noopener noreferrer',
-  },
-})
-
+// 汇总实时请求与后台恢复状态，保证恢复期间仍展示处理中并锁定会话操作。
+const isBusy = computed(() => sending.value || Boolean(pendingStreamRecovery.value))
 const canSend = computed(
-  () =>
-    (inputText.value.trim().length > 0 || pendingAttachments.value.length > 0) && !sending.value && !recording.value,
+  () => (inputText.value.trim().length > 0 || pendingAttachments.value.length > 0) && !isBusy.value && !recording.value,
 )
-const canRecord = computed(() => !sending.value && !recording.value)
+const canRecord = computed(() => !isBusy.value && !recording.value)
 // 获取当前输入对应的斜杠命令查询词。
 const slashCommandQuery = computed(() => {
   const text = inputText.value.trimStart()
@@ -261,13 +278,13 @@ const filteredSlashCommands = computed(() => {
 const showSlashCommandMenu = computed(
   () =>
     inputText.value.trimStart().startsWith('/') &&
-    !sending.value &&
+    !isBusy.value &&
     !recording.value &&
     (filteredSlashCommands.value.length > 0 || slashCommandsLoading.value),
 )
 // 根据智能体处理状态切换输入框背景提示。
 const inputPlaceholder = computed(() =>
-  sending.value ? t('agentAssistant.processingPlaceholder') : t('agentAssistant.placeholder'),
+  isBusy.value ? t('agentAssistant.processingPlaceholder') : t('agentAssistant.placeholder'),
 )
 const recordingTimeText = computed(() => {
   const seconds = Math.max(0, recordingDuration.value)
@@ -287,6 +304,7 @@ const isOpen = computed({
 })
 const drawerStyle = computed(() => ({
   '--agent-assistant-panel-width': drawerWidth.value,
+  zIndex: AGENT_ASSISTANT_LAYER_Z_INDEX.panel,
 }))
 
 // 创建前端展示用的临时 ID。
@@ -506,26 +524,57 @@ function normalizeChoiceSelectionMessages(sessionMessages: AgentChatMessage[]) {
   return sessionMessages
 }
 
-// 规范化历史消息，补齐附件、工具和选择项等可选数组。
+// 规范化消息的有序片段；旧历史按原来的工具在前、文本在后布局回退。
+function normalizeMessageSegments(value: unknown, content: string, tools: AgentToolCall[]) {
+  const normalizedSegments: AgentMessageSegment[] = []
+
+  if (Array.isArray(value)) {
+    value.forEach(rawSegment => {
+      if (!rawSegment || typeof rawSegment !== 'object' || Array.isArray(rawSegment)) return
+
+      const segment = rawSegment as Record<string, unknown>
+      if (segment.type === 'text' && typeof segment.content === 'string' && segment.content.trim()) {
+        normalizedSegments.push({ type: 'text', content: segment.content })
+        return
+      }
+
+      const toolIndex = Number(segment.toolIndex ?? segment.tool_index)
+      if (segment.type === 'tool' && Number.isInteger(toolIndex) && toolIndex >= 0 && toolIndex < tools.length) {
+        normalizedSegments.push({ type: 'tool', toolIndex })
+      }
+    })
+  }
+
+  if (normalizedSegments.length) return normalizedSegments
+
+  tools.forEach((_tool, toolIndex) => normalizedSegments.push({ type: 'tool', toolIndex }))
+  if (content.trim()) normalizedSegments.push({ type: 'text', content })
+  return normalizedSegments
+}
+
+// 规范化历史消息，补齐附件、工具、有序片段和选择项等可选数组。
 function normalizeStoredMessages(value: unknown) {
   if (!Array.isArray(value)) return []
 
   const normalizedMessages = value.slice(-MAX_PERSISTED_MESSAGES).map(rawMessage => {
     const message = rawMessage && typeof rawMessage === 'object' ? (rawMessage as Record<string, unknown>) : {}
     const role = message.role === 'assistant' ? 'assistant' : 'user'
+    const content = typeof message.content === 'string' ? message.content : stringifyChoiceField(message.content)
+    const tools = Array.isArray(message.tools) ? (message.tools as AgentToolCall[]) : []
 
     return {
       ...message,
       id: stringifyChoiceField(message.id) || createId(role),
       role,
-      content: typeof message.content === 'string' ? message.content : stringifyChoiceField(message.content),
+      content,
       createdAt: Number(message.createdAt) || Number(message.created_at) || Date.now(),
       status: normalizeMessageStatus(message.status),
       attachments: Array.isArray(message.attachments) ? message.attachments : [],
       choices: Array.isArray(message.choices)
         ? (message.choices.map(normalizeChoiceCard).filter(Boolean) as AgentChoiceCard[])
         : [],
-      tools: Array.isArray(message.tools) ? message.tools : [],
+      tools,
+      segments: normalizeMessageSegments(message.segments, content, tools),
       choice_selection: normalizeChoiceSelection(message.choice_selection || message.choiceSelection),
     } as AgentChatMessage
   })
@@ -776,32 +825,82 @@ function clearStreamRecoveryTimer() {
   streamRecoveryTimer = null
 }
 
+// 记录当前流的恢复上下文，并立即持久化，供 PWA 后台冻结或重载后继续轮询。
+function beginStreamRecovery(targetSessionId: string, startedAt: number) {
+  const current = pendingStreamRecovery.value
+  pendingStreamRecovery.value = {
+    sessionId: targetSessionId,
+    startedAt,
+    attempts: current?.sessionId === targetSessionId ? current.attempts : 0,
+  }
+  persistState({ syncHistory: false })
+}
+
+// 判断服务端正式会话 ID 或客户端会话 ID 是否属于当前恢复任务。
+function matchesStreamRecoverySession(session: AgentSessionHistoryItem, targetSessionId: string) {
+  const requestedIds = new Set([sessionId.value, targetSessionId].filter(Boolean))
+
+  return [session.sessionId, session.clientSessionId].some(id => Boolean(id && requestedIds.has(id)))
+}
+
+// 将无法继续恢复的流式占位转换成明确错误，避免界面永久停留在空白或加载态。
+function failStreamRecovery() {
+  pendingStreamRecovery.value = null
+  const assistantMessage = [...messages.value]
+    .reverse()
+    .find(message => message.role === 'assistant' && message.status === 'streaming')
+  if (assistantMessage) {
+    assistantMessage.status = 'error'
+    if (!assistantMessage.content) appendAssistantTextSegment(assistantMessage, t('agentAssistant.recoveryFailed'))
+    markToolsDone(assistantMessage)
+    refreshMessageList()
+  } else {
+    streamError.value = t('agentAssistant.recoveryFailed')
+  }
+  persistState()
+}
+
 // 从服务端拉取当前会话展示快照，用于移动端后台断开 SSE 后恢复最终结果。
 async function restoreCurrentSessionFromServer(targetSessionId: string, startedAt: number) {
   const session = await loadServerHistorySession(targetSessionId)
-  const activeSessionIds = new Set([sessionId.value, targetSessionId, session.clientSessionId].filter(Boolean))
-  if (!activeSessionIds.has(session.sessionId)) return { restored: false, pending: false }
+  const activeRecovery = pendingStreamRecovery.value
+  if (!activeRecovery || activeRecovery.sessionId !== targetSessionId) return { restored: false, pending: false }
+  if (!matchesStreamRecoverySession(session, targetSessionId)) return { restored: false, pending: false }
   if (session.updatedAt < startedAt - 1000) return { restored: false, pending: Boolean(session.isProcessing) }
-  if (!session.messages.length) return { restored: false, pending: Boolean(session.isProcessing) }
+  if (session.isProcessing) return { restored: false, pending: true }
+  if (!session.messages.length) return { restored: false, pending: false }
 
-  messages.value = normalizeStoredMessages(session.messages)
-  pendingStreamRecovery = null
+  const restoredMessages = normalizeStoredMessages(session.messages)
+  restoredMessages.forEach(message => {
+    if (message.status !== 'streaming') return
+
+    message.status = 'done'
+    markToolsDone(message)
+  })
+  messages.value = restoredMessages
+  sessionId.value = session.sessionId
+  pendingStreamRecovery.value = null
+  clearStreamRecoveryTimer()
   persistState({ syncHistory: false })
   scrollToBottom()
+  if (abortController) {
+    streamRecoveryAbortRequested = true
+    abortController.abort()
+  }
   return { restored: true, pending: false }
 }
 
 // WebAgent SSE 断流后，后台任务仍会完成并保存快照；前端回到前台后轮询拉取。
 function scheduleStreamRecovery(delay = 1200) {
-  if (!pendingStreamRecovery || typeof window === 'undefined') return
+  if (!pendingStreamRecovery.value || typeof window === 'undefined') return
 
   clearStreamRecoveryTimer()
   streamRecoveryTimer = window.setTimeout(async () => {
     streamRecoveryTimer = null
-    if (!pendingStreamRecovery) return
+    if (!pendingStreamRecovery.value) return
     if (document.visibilityState === 'hidden') return
 
-    const recovery = pendingStreamRecovery
+    const recovery = pendingStreamRecovery.value
     try {
       const result = await restoreCurrentSessionFromServer(recovery.sessionId, recovery.startedAt)
       if (result.restored) return
@@ -813,15 +912,41 @@ function scheduleStreamRecovery(delay = 1200) {
       // 会话快照可能还未写入，继续按退避间隔等待。
     }
 
-    if (!pendingStreamRecovery || pendingStreamRecovery.sessionId !== recovery.sessionId) return
-    pendingStreamRecovery.attempts += 1
-    if (pendingStreamRecovery.attempts > 8) {
-      pendingStreamRecovery = null
+    if (!pendingStreamRecovery.value || pendingStreamRecovery.value.sessionId !== recovery.sessionId) return
+    pendingStreamRecovery.value.attempts += 1
+    if (pendingStreamRecovery.value.attempts > 8) {
+      failStreamRecovery()
       return
     }
 
-    scheduleStreamRecovery(Math.min(8000, 1200 + pendingStreamRecovery.attempts * 900))
+    persistState({ syncHistory: false })
+    scheduleStreamRecovery(Math.min(8000, 1200 + pendingStreamRecovery.value.attempts * 900))
   }, delay)
+}
+
+// 从持久化元数据或最后一条 streaming 助手消息重建后台恢复任务。
+function restorePendingStreamRecovery(value: unknown) {
+  const stored = value && typeof value === 'object' ? (value as Record<string, unknown>) : null
+  const latestAssistantMessage = messages.value.at(-1)
+  const recoverableAssistantMessage =
+    latestAssistantMessage?.role === 'assistant' &&
+    (latestAssistantMessage.status === 'streaming' ||
+      (latestAssistantMessage.status === 'done' && isEmptyAssistantMessage(latestAssistantMessage)))
+      ? latestAssistantMessage
+      : undefined
+  const recoverySessionId = stringifyChoiceField(stored?.sessionId) || sessionId.value
+  const startedAt = Number(stored?.startedAt) || recoverableAssistantMessage?.createdAt || 0
+  if (!recoverySessionId || !startedAt || (!stored && !recoverableAssistantMessage)) {
+    pendingStreamRecovery.value = null
+    return
+  }
+
+  if (recoverableAssistantMessage) recoverableAssistantMessage.status = 'streaming'
+  pendingStreamRecovery.value = {
+    sessionId: recoverySessionId,
+    startedAt,
+    attempts: Math.max(0, Number(stored?.attempts) || 0),
+  }
 }
 
 // 恢复当前会话状态，优先使用本地状态，缺失时使用最近历史。
@@ -843,9 +968,11 @@ function restoreState() {
     const state = JSON.parse(raw)
     sessionId.value = state.sessionId || createSessionId()
     messages.value = normalizeStoredMessages(state.messages)
+    restorePendingStreamRecovery(state.streamRecovery)
     upsertCurrentSessionHistory()
   } catch (error) {
     sessionId.value = createSessionId()
+    pendingStreamRecovery.value = null
   }
 }
 
@@ -959,6 +1086,7 @@ function persistState(options: { syncHistory?: boolean } = {}) {
       JSON.stringify({
         sessionId: sessionId.value,
         messages: messages.value.slice(-MAX_PERSISTED_MESSAGES),
+        streamRecovery: pendingStreamRecovery.value,
       }),
     )
   } catch (error) {
@@ -966,12 +1094,6 @@ function persistState(options: { syncHistory?: boolean } = {}) {
   }
 
   if (syncHistory) upsertCurrentSessionHistory()
-}
-
-// 渲染助手消息中的 Markdown 文本。
-function renderMarkdown(value: string) {
-  if (!value) return ''
-  return md.render(value)
 }
 
 // 拼接后端 API 地址。
@@ -1018,6 +1140,11 @@ function isMessageScrollerNearBottom() {
   return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= MESSAGE_SCROLL_FOLLOW_THRESHOLD
 }
 
+// 只在滚动事件中更新自动跟随意图，避免每个流式事件触发布局读取。
+function handleMessageScrollerScroll() {
+  messageScrollerShouldFollow = isMessageScrollerNearBottom()
+}
+
 // 合并滚动更新请求，降低流式输出时的布局测量频率。
 function scheduleMessageScrollerUpdate(options: { toBottom?: boolean } = {}) {
   const { toBottom = false } = options
@@ -1037,6 +1164,7 @@ function scheduleMessageScrollerUpdate(options: { toBottom?: boolean } = {}) {
 // 将消息列表滚动到底部。
 function scrollToBottom(options: { smooth?: boolean } = {}) {
   const { smooth = false } = options
+  messageScrollerShouldFollow = true
   nextTick(() => {
     const scroller = getMessageScrollerElement()
     if (!scroller) return
@@ -1080,13 +1208,17 @@ function clearMessageScrollFrame() {
   pendingMessageScrollToBottom = false
 }
 
-// 延迟持久化流式消息，避免每个 token 都写入本地存储。
+// 流式期间至多每秒保存一次轻量当前态，终态再同步完整历史。
 function scheduleStreamPersist() {
-  clearStreamPersistTimer()
+  if (streamPersistTimer !== null) return
+
+  const elapsed = Date.now() - streamPersistLastRunAt
+  const delay = Math.max(0, STREAM_STATE_PERSIST_DELAY - elapsed)
   streamPersistTimer = window.setTimeout(() => {
-    persistState()
     streamPersistTimer = null
-  }, STREAM_STATE_PERSIST_DELAY)
+    streamPersistLastRunAt = Date.now()
+    persistState({ syncHistory: false })
+  }, delay)
 }
 
 // 同步输入框高度，使多行输入不撑破底部布局。
@@ -1122,6 +1254,7 @@ function addMessage(
     attachments,
     choices: [],
     tools: [],
+    segments: role === 'assistant' && content ? [{ type: 'text', content }] : [],
     choice_selection: choiceSelection,
   }
   messages.value.push(message)
@@ -1137,6 +1270,45 @@ function normalizeToolMessage(message: string) {
   return message.replace(/^=>\s*/, '').trim()
 }
 
+// 解析非啰嗦模式的工具汇总，供相邻工具状态按类别累计次数。
+function parseToolSummary(message: string) {
+  const summaryMatch = message.match(/^（(.+)）$/)
+  if (!summaryMatch) return null
+
+  const parts = summaryMatch[1].split('，').map(part => {
+    const countMatch = part.trim().match(/^(.*?\D)(\d+)(\D.*)$/)
+    if (!countMatch) return null
+    return {
+      prefix: countMatch[1],
+      count: Number(countMatch[2]),
+      suffix: countMatch[3],
+    }
+  })
+  return parts.every(Boolean) ? (parts as Array<{ prefix: string; count: number; suffix: string }>) : null
+}
+
+// 仅合并相邻的非啰嗦工具汇总；正文或具体工具提示会自然终止当前聚合组。
+function mergeToolSummaries(currentMessage: string, nextMessage: string) {
+  const currentParts = parseToolSummary(currentMessage)
+  const nextParts = parseToolSummary(nextMessage)
+  if (!currentParts || !nextParts) return null
+
+  const mergedParts = currentParts.map(part => ({ ...part }))
+  const partIndexes = new Map(mergedParts.map((part, index) => [`${part.prefix}\u0000${part.suffix}`, index]))
+  nextParts.forEach(part => {
+    const key = `${part.prefix}\u0000${part.suffix}`
+    const existingIndex = partIndexes.get(key)
+    if (existingIndex === undefined) {
+      partIndexes.set(key, mergedParts.length)
+      mergedParts.push({ ...part })
+      return
+    }
+    mergedParts[existingIndex].count += part.count
+  })
+
+  return `（${mergedParts.map(part => `${part.prefix}${part.count}${part.suffix}`).join('，')}）`
+}
+
 // 将当前消息里的运行中工具标记为完成。
 function markToolsDone(message: AgentChatMessage) {
   message.tools.forEach(tool => {
@@ -1144,11 +1316,58 @@ function markToolsDone(message: AgentChatMessage) {
   })
 }
 
+// 追加助手文本，并只合并紧邻的文本片段以保留工具事件边界。
+function appendAssistantTextSegment(message: AgentChatMessage, content: string) {
+  if (!content) return
+
+  message.content += content
+  const lastSegment = message.segments.at(-1)
+  if (lastSegment?.type === 'text') {
+    lastSegment.content += content
+  } else if (content.trim()) {
+    message.segments.push({ type: 'text', content })
+  }
+}
+
+// 替换助手文本但保留工具片段，用于无法继续流式处理时显示错误。
+function replaceAssistantTextSegments(message: AgentChatMessage, content: string) {
+  message.content = content
+  message.segments = message.segments.filter(segment => segment.type === 'tool')
+  if (content.trim()) message.segments.push({ type: 'text', content })
+}
+
+// 按 SSE 事件顺序渲染文本与工具，只跳过无法产生可见内容的空白文本。
+function getRenderableMessageSegments(message: AgentChatMessage): AgentRenderableMessageSegment[] {
+  return message.segments.reduce<AgentRenderableMessageSegment[]>((renderableSegments, segment, index) => {
+    if (segment.type === 'text') {
+      if (segment.content.trim()) renderableSegments.push({ ...segment, key: `text-${index}` })
+      return renderableSegments
+    }
+
+    const tool = message.tools[segment.toolIndex]
+    if (tool) {
+      const previousSegment = renderableSegments.at(-1)
+      const mergedMessage =
+        previousSegment?.type === 'tool' ? mergeToolSummaries(previousSegment.tool.message, tool.message) : null
+      if (previousSegment?.type === 'tool' && mergedMessage) {
+        previousSegment.tool = {
+          ...previousSegment.tool,
+          message: mergedMessage,
+          status: previousSegment.tool.status === 'running' || tool.status === 'running' ? 'running' : 'done',
+        }
+      } else {
+        renderableSegments.push({ type: 'tool', key: `tool-${tool.id}`, tool })
+      }
+    }
+    return renderableSegments
+  }, [])
+}
+
 // 判断消息是否没有任何可展示内容，可用于清理编辑回调产生的占位回复。
 function isEmptyAssistantMessage(message: AgentChatMessage) {
   return (
     message.role === 'assistant' &&
-    !message.content &&
+    !message.content.trim() &&
     message.attachments.length === 0 &&
     message.choices.length === 0 &&
     message.tools.length === 0
@@ -1167,6 +1386,7 @@ function applyMessageUpdate(event: AgentStreamEvent) {
   message.content = typeof target?.content === 'string' ? target.content : ''
   message.attachments = Array.isArray(target?.attachments) ? target.attachments : []
   message.tools = Array.isArray(target?.tools) ? target.tools : []
+  message.segments = normalizeMessageSegments(target?.segments, message.content, message.tools)
   message.choices = Array.isArray(target?.choices)
     ? (target.choices.map(normalizeChoiceCard).filter(Boolean) as AgentChoiceCard[])
     : []
@@ -1178,11 +1398,9 @@ function applyMessageUpdate(event: AgentStreamEvent) {
 
 // 将单个 SSE 事件应用到正在流式输出的助手消息。
 function applyStreamEvent(event: AgentStreamEvent, assistantMessage: AgentChatMessage) {
-  const shouldFollowBottom = isMessageScrollerNearBottom()
-
   switch (event.type) {
     case 'delta':
-      assistantMessage.content += event.content || ''
+      appendAssistantTextSegment(assistantMessage, event.content || '')
       emit('assistant-preview', assistantMessage.content)
       break
     case 'tool':
@@ -1192,6 +1410,7 @@ function applyStreamEvent(event: AgentStreamEvent, assistantMessage: AgentChatMe
         message: normalizeToolMessage(event.message || ''),
         status: 'running',
       })
+      assistantMessage.segments.push({ type: 'tool', toolIndex: assistantMessage.tools.length - 1 })
       break
     case 'attachment':
       if (event.attachment?.url) {
@@ -1218,12 +1437,17 @@ function applyStreamEvent(event: AgentStreamEvent, assistantMessage: AgentChatMe
     case 'error':
       assistantMessage.status = 'error'
       // 后端流式错误已经以 AI 消息展示，避免底部提示条重复且持续占位。
-      assistantMessage.content ||= event.message_i18n || event.message || t('agentAssistant.error')
+      if (!assistantMessage.content) {
+        appendAssistantTextSegment(assistantMessage, event.message_i18n || event.message || t('agentAssistant.error'))
+      }
       emit('assistant-preview', assistantMessage.content)
       markToolsDone(assistantMessage)
       break
     case 'start':
-      if (event.session_id) sessionId.value = event.session_id
+      if (event.session_id) {
+        sessionId.value = event.session_id
+        if (pendingStreamRecovery.value) pendingStreamRecovery.value.sessionId = event.session_id
+      }
       break
     default:
       break
@@ -1231,8 +1455,52 @@ function applyStreamEvent(event: AgentStreamEvent, assistantMessage: AgentChatMe
 
   scheduleStreamPersist()
   nextTick(() => {
-    scheduleMessageScrollerUpdate({ toBottom: shouldFollowBottom })
+    scheduleMessageScrollerUpdate({ toBottom: messageScrollerShouldFollow })
   })
+}
+
+// 将同一条助手消息的连续文本增量合并到一个动画帧，语义事件到来前会同步冲刷。
+function flushPendingStreamDelta() {
+  if (streamDeltaFrame !== null) {
+    window.cancelAnimationFrame(streamDeltaFrame)
+    streamDeltaFrame = null
+  }
+  if (!pendingStreamDeltaMessage || !pendingStreamDelta) return
+
+  const assistantMessage = pendingStreamDeltaMessage
+  const content = pendingStreamDelta
+  pendingStreamDeltaMessage = null
+  pendingStreamDelta = ''
+  applyStreamEvent({ type: 'delta', content }, assistantMessage)
+}
+
+function clearPendingStreamDelta() {
+  if (streamDeltaFrame !== null) window.cancelAnimationFrame(streamDeltaFrame)
+  streamDeltaFrame = null
+  pendingStreamDeltaMessage = null
+  pendingStreamDelta = ''
+}
+
+function schedulePendingStreamDeltaFlush() {
+  if (streamDeltaFrame !== null) return
+
+  streamDeltaFrame = window.requestAnimationFrame(() => {
+    streamDeltaFrame = null
+    flushPendingStreamDelta()
+  })
+}
+
+function queueStreamEvent(event: AgentStreamEvent, assistantMessage: AgentChatMessage) {
+  if (event.type !== 'delta') {
+    flushPendingStreamDelta()
+    applyStreamEvent(event, assistantMessage)
+    return
+  }
+
+  if (pendingStreamDeltaMessage && pendingStreamDeltaMessage !== assistantMessage) flushPendingStreamDelta()
+  pendingStreamDeltaMessage = assistantMessage
+  pendingStreamDelta += event.content || ''
+  schedulePendingStreamDeltaFlush()
 }
 
 // 解析一个 SSE 数据块。
@@ -1248,7 +1516,7 @@ function parseSseBlock(block: string) {
 }
 
 // 读取并应用智能助手 SSE 响应流。
-async function readAgentStream(response: Response, assistantMessage: AgentChatMessage) {
+async function readAgentStream(response: Response, assistantMessage: AgentChatMessage): Promise<AgentStreamReadResult> {
   if (!response.body) {
     throw new Error(t('agentAssistant.noStream'))
   }
@@ -1256,26 +1524,39 @@ async function readAgentStream(response: Response, assistantMessage: AgentChatMe
   const reader = response.body.getReader()
   const decoder = new TextDecoder('utf-8')
   let buffer = ''
+  let receivedTerminalEvent = false
 
-  while (true) {
-    const { value, done } = await reader.read()
-    if (done) break
+  // 应用事件并记录服务端是否明确结束本轮流，区分正常完成与无异常的后台断流。
+  const consumeEvent = (event: AgentStreamEvent | null) => {
+    if (!event) return
 
-    buffer += decoder.decode(value, { stream: true })
-    const blocks = buffer.split(/\n\n/)
-    buffer = blocks.pop() || ''
+    queueStreamEvent(event, assistantMessage)
+    if (event.type === 'done' || event.type === 'error') receivedTerminalEvent = true
+  }
 
-    for (const block of blocks) {
-      const event = parseSseBlock(block)
-      if (event) applyStreamEvent(event, assistantMessage)
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const blocks = buffer.split(/\r?\n\r?\n/)
+      buffer = blocks.pop() || ''
+
+      for (const block of blocks) {
+        consumeEvent(parseSseBlock(block))
+      }
     }
+
+    buffer += decoder.decode()
+    if (buffer.trim()) {
+      consumeEvent(parseSseBlock(buffer))
+    }
+  } finally {
+    flushPendingStreamDelta()
   }
 
-  buffer += decoder.decode()
-  if (buffer.trim()) {
-    const event = parseSseBlock(buffer)
-    if (event) applyStreamEvent(event, assistantMessage)
-  }
+  return { receivedTerminalEvent }
 }
 
 // 移动端浏览器退到后台时，SSE/fetch 可能以 TypeError: Load failed 等形式被动断开。
@@ -1467,7 +1748,9 @@ async function streamAgentMessage(
 
   abortController = new AbortController()
   userAbortRequested = false
+  streamRecoveryAbortRequested = false
   const streamStartedAt = Date.now()
+  activeStreamStartedAt = streamStartedAt
   let shouldFollowBottomAfterStream = true
   let shouldSaveClientSnapshot = true
 
@@ -1497,8 +1780,18 @@ async function streamAgentMessage(
       throw new Error(await resolveAgentResponseErrorMessage(response))
     }
 
-    await readAgentStream(response, assistantMessage)
+    const streamResult = await readAgentStream(response, assistantMessage)
     shouldFollowBottomAfterStream = isMessageScrollerNearBottom()
+    if (!streamResult.receivedTerminalEvent) {
+      shouldSaveClientSnapshot = false
+      beginStreamRecovery(sessionId.value, streamStartedAt)
+      refreshMessageList()
+      if (document.visibilityState === 'visible') scheduleStreamRecovery(0)
+      return
+    }
+
+    pendingStreamRecovery.value = null
+    clearStreamRecoveryTimer()
     if (isEmptyAssistantMessage(assistantMessage)) {
       messages.value = messages.value.filter(message => message.id !== assistantMessage.id)
       refreshMessageList()
@@ -1510,6 +1803,8 @@ async function streamAgentMessage(
       refreshMessageList()
     }
   } catch (error: any) {
+    if (error?.name === 'AbortError' && streamRecoveryAbortRequested) return
+
     if (error?.name === 'AbortError' && userAbortRequested) {
       assistantMessage.status = 'done'
       markToolsDone(assistantMessage)
@@ -1519,25 +1814,22 @@ async function streamAgentMessage(
 
     if (isRecoverableStreamDisconnect(error)) {
       shouldSaveClientSnapshot = false
-      pendingStreamRecovery = {
-        sessionId: sessionId.value,
-        startedAt: streamStartedAt,
-        attempts: 0,
-      }
-      assistantMessage.status = 'done'
-      markToolsDone(assistantMessage)
+      beginStreamRecovery(sessionId.value, streamStartedAt)
+      assistantMessage.status = 'streaming'
       refreshMessageList()
       if (document.visibilityState === 'visible') scheduleStreamRecovery(1200)
       return
     }
 
     assistantMessage.status = 'error'
-    assistantMessage.content = error?.message || t('agentAssistant.error')
+    replaceAssistantTextSegments(assistantMessage, error?.message || t('agentAssistant.error'))
     markToolsDone(assistantMessage)
     refreshMessageList()
   } finally {
     abortController = null
+    activeStreamStartedAt = 0
     userAbortRequested = false
+    streamRecoveryAbortRequested = false
     clearStreamPersistTimer()
     persistState()
     if (shouldSaveClientSnapshot) {
@@ -1556,7 +1848,7 @@ async function streamAgentMessage(
 async function sendMessage() {
   const text = inputText.value.trim()
   const attachments = [...pendingAttachments.value]
-  if ((!text && !attachments.length) || sending.value) return
+  if ((!text && !attachments.length) || isBusy.value) return
 
   streamError.value = ''
   inputText.value = ''
@@ -1711,7 +2003,7 @@ function toggleVoiceRecording() {
 
 // 处理选择按钮点击，保存可读选择描述并把真实值发给 Agent。
 async function handleChoiceClick(message: AgentChatMessage, choice: AgentChoiceCard, button: AgentChoiceButton) {
-  if (sending.value || choice.status !== 'pending') return
+  if (isBusy.value || choice.status !== 'pending') return
 
   sending.value = true
   streamError.value = ''
@@ -1787,8 +2079,21 @@ async function handleChoiceClick(message: AgentChatMessage, choice: AgentChoiceC
 // 中止当前流式回复。
 function stopGeneration() {
   userAbortRequested = true
-  pendingStreamRecovery = null
+  pendingStreamRecovery.value = null
   clearStreamRecoveryTimer()
+  const assistantMessage = [...messages.value]
+    .reverse()
+    .find(message => message.role === 'assistant' && message.status === 'streaming')
+  if (assistantMessage) {
+    if (isEmptyAssistantMessage(assistantMessage)) {
+      messages.value = messages.value.filter(message => message.id !== assistantMessage.id)
+    } else {
+      assistantMessage.status = 'done'
+      markToolsDone(assistantMessage)
+    }
+    refreshMessageList()
+  }
+  persistState()
   if (sessionId.value) {
     fetchAgentApi(`message/agent/sessions/${encodeURIComponent(sessionId.value)}/stop`, {
       method: 'POST',
@@ -1813,7 +2118,7 @@ function startNewSession() {
 
 // 从历史列表恢复指定会话，同时把它设为当前本地会话。
 async function loadHistorySession(targetSessionId: string) {
-  if (sending.value) return
+  if (isBusy.value) return
 
   let historySession = historySessions.value.find(item => item.sessionId === targetSessionId)
   if (!historySession) return
@@ -1837,7 +2142,7 @@ async function loadHistorySession(targetSessionId: string) {
 
 // 删除指定历史会话；若删除的是当前会话，则切换到新的空会话。
 async function deleteHistorySession(targetSessionId: string) {
-  if (sending.value && targetSessionId === sessionId.value) return
+  if (isBusy.value && targetSessionId === sessionId.value) return
 
   try {
     await fetchAgentApi(`message/agent/sessions/${encodeURIComponent(targetSessionId)}`, {
@@ -1906,16 +2211,39 @@ function handleGlobalKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape' && isOpen.value) closeDrawer()
 }
 
-// 页面从后台恢复时尝试拉取 WebAgent 后台完成后的会话快照。
+// 页面进入后台时保存流式占位，恢复可见时尝试拉取 WebAgent 后台完成后的会话快照。
 function handleVisibilityChange() {
+  if (document.visibilityState === 'hidden') {
+    if (sending.value && activeStreamStartedAt && sessionId.value) {
+      beginStreamRecovery(sessionId.value, activeStreamStartedAt)
+    } else if (pendingStreamRecovery.value) {
+      clearStreamPersistTimer()
+      persistState({ syncHistory: false })
+    }
+    return
+  }
+
+  scheduleStreamRecovery(0)
+}
+
+// PWA 从页面缓存或系统挂起状态返回时补触发恢复，兼容未派发 visibilitychange 的浏览器。
+function handlePageShow() {
   if (document.visibilityState === 'visible') scheduleStreamRecovery(0)
 }
 
 // 处理输入框回车发送。
 function handleInputKeydown(event: KeyboardEvent) {
-  if (event.key !== 'Enter' || event.shiftKey) return
+  if (event.key !== 'Enter' || event.shiftKey || isComposing.value || event.isComposing || event.keyCode === 229) return
   event.preventDefault()
   sendMessage()
+}
+
+function handleCompositionStart() {
+  isComposing.value = true
+}
+
+function handleCompositionEnd() {
+  isComposing.value = false
 }
 
 watch(isOpen, syncAgentAssistantOpenState, { immediate: true })
@@ -1927,14 +2255,16 @@ watch(isOpen, open => {
   if (open) scrollToBottom()
 })
 
-watch(sending, value => emit('thinking-change', value), { immediate: true })
+watch(isBusy, value => emit('thinking-change', value), { immediate: true })
 
 onMounted(() => {
   restoreHistorySessions()
   restoreState()
   loadServerHistorySessions()
+  if (pendingStreamRecovery.value && document.visibilityState === 'visible') scheduleStreamRecovery(0)
   syncInputHeight()
   window.addEventListener('keydown', handleGlobalKeydown)
+  window.addEventListener('pageshow', handlePageShow)
   document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 
@@ -1943,11 +2273,13 @@ onScopeDispose(clearPendingAttachments)
 onScopeDispose(cancelVoiceRecording)
 onScopeDispose(clearMessageScrollFrame)
 onScopeDispose(clearStreamPersistTimer)
+onScopeDispose(clearPendingStreamDelta)
 onScopeDispose(clearStreamRecoveryTimer)
 onScopeDispose(() => {
   if (typeof window === 'undefined') return
 
   window.removeEventListener('keydown', handleGlobalKeydown)
+  window.removeEventListener('pageshow', handlePageShow)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 </script>
@@ -1980,7 +2312,7 @@ onScopeDispose(() => {
           <div>
             <div class="text-subtitle-1 font-weight-semibold">{{ t('agentAssistant.title') }}</div>
             <div class="agent-assistant-status">
-              {{ sending ? t('agentAssistant.thinking') : t('agentAssistant.ready') }}
+              {{ isBusy ? t('agentAssistant.thinking') : t('agentAssistant.ready') }}
             </div>
           </div>
         </div>
@@ -1988,11 +2320,11 @@ onScopeDispose(() => {
           <VMenu
             v-model="historyMenuOpen"
             :close-on-content-click="false"
-            content-class="agent-assistant-history-overlay"
             location="bottom end"
             offset="8"
             max-width="360"
-            :z-index="2603"
+            :style="{ zIndex: AGENT_ASSISTANT_LAYER_Z_INDEX.overlay }"
+            :z-index="AGENT_ASSISTANT_LAYER_Z_INDEX.overlay"
           >
             <template #activator="{ props }">
               <IconBtn v-bind="props" :title="t('agentAssistant.history')" :aria-label="t('agentAssistant.history')">
@@ -2030,7 +2362,7 @@ onScopeDispose(() => {
                         class="agent-assistant-history-item"
                         :class="{ 'is-active': isCurrentHistorySession(historySession.sessionId) }"
                         type="button"
-                        :disabled="sending"
+                        :disabled="isBusy"
                         @click="loadHistorySession(historySession.sessionId)"
                       >
                         <span class="agent-assistant-history-item__content">
@@ -2044,7 +2376,7 @@ onScopeDispose(() => {
                         </span>
                         <IconBtn
                           size="x-small"
-                          :disabled="sending"
+                          :disabled="isBusy"
                           :title="t('agentAssistant.deleteHistory')"
                           :aria-label="t('agentAssistant.deleteHistory')"
                           @click.stop="deleteHistorySession(historySession.sessionId)"
@@ -2065,7 +2397,7 @@ onScopeDispose(() => {
             </VCard>
           </VMenu>
           <IconBtn
-            :disabled="sending"
+            :disabled="isBusy"
             :title="t('agentAssistant.newChat')"
             :aria-label="t('agentAssistant.newChat')"
             @click="startNewSession"
@@ -2082,6 +2414,7 @@ onScopeDispose(() => {
         ref="messageListRef"
         class="agent-assistant-messages"
         :class="{ 'agent-assistant-messages--has-content': hasMessages }"
+        @scroll.passive="handleMessageScrollerScroll"
       >
         <div class="agent-assistant-messages__content">
           <div v-if="!hasMessages" class="agent-assistant-empty">
@@ -2103,31 +2436,41 @@ onScopeDispose(() => {
               <span>{{ message.role === 'user' ? currentUserName : t('agentAssistant.assistant') }}</span>
             </div>
 
-            <div v-if="message.tools.length" class="agent-assistant-tools">
-              <div v-for="tool in message.tools" :key="tool.id" class="agent-assistant-tool">
-                <VIcon
-                  :icon="
-                    tool.status === 'running' && message.status === 'streaming'
-                      ? 'line-md:loading-twotone-loop'
-                      : 'mdi-check-circle-outline'
-                  "
-                  size="16"
+            <div
+              v-if="message.role === 'assistant' && (message.tools.length || message.content.trim())"
+              class="agent-assistant-segments"
+            >
+              <template v-for="segment in getRenderableMessageSegments(message)" :key="segment.key">
+                <AgentMarkdownContent
+                  v-if="segment.type === 'text'"
+                  :content="segment.content"
+                  :streaming="message.status === 'streaming'"
                 />
-                <span>{{ tool.message }}</span>
-              </div>
+                <div v-else class="agent-assistant-tool">
+                  <VIcon
+                    :icon="
+                      segment.tool.status === 'running' && message.status === 'streaming'
+                        ? 'line-md:loading-twotone-loop'
+                        : 'mdi-check-circle-outline'
+                    "
+                    size="16"
+                  />
+                  <span>{{ segment.tool.message }}</span>
+                </div>
+              </template>
             </div>
 
-            <div
-              v-if="message.content"
-              class="agent-assistant-message__bubble markdown-body"
-              v-html="renderMarkdown(message.content)"
+            <AgentMarkdownContent
+              v-else-if="message.content"
+              :content="message.content"
+              :streaming="message.status === 'streaming'"
             />
 
             <div v-if="message.choices.length" class="agent-assistant-choices">
               <div v-for="choice in message.choices" :key="choice.id" class="agent-assistant-choice">
                 <div class="agent-assistant-choice__bubble">
                   <div v-if="choice.title" class="agent-assistant-choice__title">{{ choice.title }}</div>
-                  <div class="agent-assistant-choice__prompt markdown-body" v-html="renderMarkdown(choice.prompt)" />
+                  <AgentMarkdownContent :content="choice.prompt" variant="choice" />
                   <div v-if="choice.status === 'selected'" class="agent-assistant-choice__selected">
                     <VIcon icon="mdi-check-circle-outline" size="16" />
                     <span>{{
@@ -2148,7 +2491,7 @@ onScopeDispose(() => {
                     class="agent-assistant-choice__button"
                     size="small"
                     variant="flat"
-                    :disabled="sending || choice.status !== 'pending'"
+                    :disabled="isBusy || choice.status !== 'pending'"
                     @click="handleChoiceClick(message, choice, button)"
                   >
                     {{ button.label }}
@@ -2221,6 +2564,7 @@ onScopeDispose(() => {
             <div
               v-if="
                 !message.content &&
+                !message.segments.length &&
                 !message.attachments.length &&
                 !message.choices.length &&
                 message.status === 'streaming'
@@ -2259,7 +2603,7 @@ onScopeDispose(() => {
             <IconBtn
               class="agent-assistant-surface-btn"
               size="x-small"
-              :disabled="sending"
+              :disabled="isBusy"
               :title="t('agentAssistant.removeAttachment')"
               :aria-label="t('agentAssistant.removeAttachment')"
               @click="removePendingAttachment(attachment.id)"
@@ -2291,12 +2635,12 @@ onScopeDispose(() => {
             class="agent-assistant-file-input"
             type="file"
             multiple
-            :disabled="sending"
+            :disabled="isBusy"
             @change="handleFileSelection"
           />
           <IconBtn
             class="agent-assistant-attach agent-assistant-surface-btn"
-            :disabled="sending || recording"
+            :disabled="isBusy || recording"
             :title="t('agentAssistant.attachFile')"
             :aria-label="t('agentAssistant.attachFile')"
             @click="openFilePicker"
@@ -2308,10 +2652,12 @@ onScopeDispose(() => {
             v-model="inputText"
             class="agent-assistant-textarea"
             rows="1"
-            :disabled="sending || recording"
+            :disabled="isBusy || recording"
             :placeholder="inputPlaceholder"
             @input="handleInputChange"
             @keydown="handleInputKeydown"
+            @compositionstart="handleCompositionStart"
+            @compositionend="handleCompositionEnd"
           />
           <IconBtn
             class="agent-assistant-record agent-assistant-surface-btn"
@@ -2333,12 +2679,12 @@ onScopeDispose(() => {
           </IconBtn>
           <IconBtn
             class="agent-assistant-send agent-assistant-surface-btn"
-            :disabled="!sending && !canSend"
-            :title="sending ? t('agentAssistant.stop') : t('common.send')"
-            :aria-label="sending ? t('agentAssistant.stop') : t('common.send')"
-            @click="sending ? stopGeneration() : sendMessage()"
+            :disabled="!isBusy && !canSend"
+            :title="isBusy ? t('agentAssistant.stop') : t('common.send')"
+            :aria-label="isBusy ? t('agentAssistant.stop') : t('common.send')"
+            @click="isBusy ? stopGeneration() : sendMessage()"
           >
-            <VIcon :icon="sending ? 'mdi-stop' : 'mdi-send'" />
+            <VIcon :icon="isBusy ? 'mdi-stop' : 'mdi-send'" />
           </IconBtn>
         </div>
       </footer>
@@ -2346,21 +2692,12 @@ onScopeDispose(() => {
   </aside>
 </template>
 
-<style lang="scss">
-.agent-assistant-history-overlay {
-  z-index: 2603 !important;
-}
-</style>
-
 <style lang="scss" scoped>
 /* stylelint-disable selector-pseudo-class-no-unknown */
 /* stylelint-disable no-descending-specificity */
 
 .agent-assistant-panel {
   position: fixed;
-
-  /* Agent 会话层保持高于入口（2600）和业务弹窗，同时低于自身弹出菜单。 */
-  z-index: 2601;
   overflow: hidden;
   background: rgb(var(--v-theme-surface));
 
@@ -2799,11 +3136,14 @@ onScopeDispose(() => {
   background: var(--agent-assistant-assistant-bg);
 }
 
-.agent-assistant-tools {
+.agent-assistant-segments {
   display: grid;
-  gap: 0.4rem;
+  gap: 0.5rem;
   inline-size: min(100%, 34rem);
-  margin-block-end: 0.5rem;
+}
+
+.agent-assistant-segments .agent-assistant-message__bubble {
+  inline-size: 100%;
 }
 
 .agent-assistant-tool {
