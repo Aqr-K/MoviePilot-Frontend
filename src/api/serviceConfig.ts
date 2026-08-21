@@ -1,5 +1,6 @@
 import api from './index'
 import type {
+  ServiceConfigFormInfo,
   ServiceConfigProviderIssue,
   ServiceFamilyInfo,
   ServiceInstanceConfigInfo,
@@ -188,6 +189,18 @@ export function fetchServiceFamilies(): Promise<ServiceFamilyInfo[]> {
 /** 列出某族当前已登记的服务实例类型，供新增配置的下拉框取用。 */
 export function fetchServiceTypes(capability: string): Promise<ServiceTypeInfo[]> {
   return api.get<ServiceTypeInfo[]>(`service/types/${encodeURIComponent(capability)}`)
+}
+
+/**
+ * 取某个服务实例类型随声明登记的专属配置界面。
+ *
+ * 界面按类型单取而不随类型目录整批下发：一份目录里塞进十几棵组件树，前端多半一棵都用不上。
+ * 未登记的类型答 `available` 为 False 而非报错，调用方据此沿用内建渲染方式。
+ */
+export function fetchServiceConfigForm(capability: string, serviceType: string): Promise<ServiceConfigFormInfo> {
+  return api.get<ServiceConfigFormInfo>(
+    `service/config_form/${encodeURIComponent(capability)}/${encodeURIComponent(serviceType)}`,
+  )
 }
 
 /** 列出某族的全部实例配置，凭据一律以掩码下发。 */

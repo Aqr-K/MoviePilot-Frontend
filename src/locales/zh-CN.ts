@@ -538,6 +538,10 @@ export default {
       title: '通知',
       description: '通知渠道（企业微信、微信 ClawBot、Telegram、Slack、SynologyChat、VoceChat、WebPush）、消息发送范围',
     },
+    auth: {
+      title: '登录',
+      description: '登录页上的第三方登录入口，由插件提供',
+    },
     about: {
       title: '关于',
       description: '软件版本',
@@ -1516,6 +1520,28 @@ export default {
     bareTokenTarget: '承接不带实例名的路径',
     bareTokenTargetHint: '本存储类型每份路径没写实例名时落到这里，每个类型只能有一份；与「默认存储」是两回事',
     addInstance: '添加实例',
+  },
+  auth: {
+    entry: '登录入口',
+    entries: '登录入口',
+    entriesDesc: '登录页上账号密码之外的登录按钮，由插件提供，每条配置对应一个按钮。',
+    noTypesTitle: '暂无可用的登录入口类型',
+    noTypesDesc: '登录入口全部由插件提供，安装并启用提供登录入口的插件后即可在此配置。',
+    noEntries: '还没有配置登录入口，用下方的按钮添加一个。',
+    instanceName: '入口名称',
+    instanceNameHint: '登录页上该按钮显示的文字，同一类型下不可重名',
+    instanceNameRequired: '入口名称不能为空',
+    enabled: '启用',
+    noConfigForm: '该登录入口类型没有提供配置界面。',
+    identityProvider: '身份绑定标识',
+    identityProviderHint:
+      "留空即按「类型{'@'}实例名」派生。只有两种情况需要填：承接旧入口留下的存量绑定，或改名之后想保住已有绑定。",
+    identityProviderEffective: '当前生效的标识：{identity}',
+    identityConflict: '标识 {identity} 已被同族另一条配置认领，两条都不会出现在登录页上。',
+    identityConflictBadge: '标识冲突',
+    identityConflictTitle: '以下登录入口因标识冲突而不生效',
+    identityConflictDesc:
+      '同一个身份绑定标识被多条配置认领时，这几条一律不产出登录入口——让其中一条胜出，等于把另一台服务器的账号并进它的身份空间。请把其中至多一条填成该取值，其余留空或另填。',
   },
   serviceConfig: {
     providerIssueTitle: '以下配置当前不生效',

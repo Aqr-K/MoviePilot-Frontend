@@ -1788,6 +1788,26 @@ export interface ServiceTypeInfo {
   distribution: string
 }
 
+// 某个服务实例类型随声明登记的专属配置界面
+export interface ServiceConfigFormInfo {
+  // 该类型有没有专属配置界面，为 false 时界面相关字段均为 null
+  available: boolean
+  // 类型展示名称，类型未登记时为 null
+  name?: string | null
+  // 用户能否为该类型配置多份
+  multi_instance: boolean
+  // Vuetify 渲染模式的界面布局
+  conf?: RenderProps[] | null
+  // 界面的初始数据模型
+  model?: Record<string, unknown> | null
+  // Vue 渲染模式的联邦组件名
+  component?: string | null
+  // Vue 渲染模式的联邦模块名
+  remote?: string | null
+  // 该类型配置内容的契约，未声明契约时为 null
+  config_schema?: Record<string, unknown> | null
+}
+
 // 一条服务实例配置的下发形状
 export interface ServiceInstanceConfigInfo {
   // 该配置所属服务族的能力标签

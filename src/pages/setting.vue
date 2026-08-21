@@ -18,6 +18,7 @@ const AccountSettingRule = defineAsyncComponent(() => import('@/views/setting/Ac
 const AccountSettingSearch = defineAsyncComponent(() => import('@/views/setting/AccountSettingSearch.vue'))
 const AccountSettingSubscribe = defineAsyncComponent(() => import('@/views/setting/AccountSettingSubscribe.vue'))
 const AccountSettingNotification = defineAsyncComponent(() => import('@/views/setting/AccountSettingNotification.vue'))
+const AccountSettingAuth = defineAsyncComponent(() => import('@/views/setting/AccountSettingAuth.vue'))
 
 const visitedTabs = ref(new Set<string>())
 
@@ -29,6 +30,7 @@ const settingTabComponents = [
   { value: 'search', component: AccountSettingSearch },
   { value: 'subscribe', component: AccountSettingSubscribe },
   { value: 'notification', component: AccountSettingNotification },
+  { value: 'auth', component: AccountSettingAuth },
 ]
 
 function markTabVisited(tab: string) {

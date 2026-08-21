@@ -547,6 +547,10 @@ export default {
       description:
         'Notification channels (WeChat Work, WeChat ClawBot, Telegram, Slack, SynologyChat, VoceChat, WebPush), message scope',
     },
+    auth: {
+      title: 'Login',
+      description: 'Third-party login entries on the login page, provided by plugins',
+    },
     about: {
       title: 'About',
       description: 'Software version',
@@ -1527,6 +1531,31 @@ export default {
     bareTokenTargetHint:
       'Paths of this storage type that omit the instance name resolve here. Only one per type, and it is not the same as the default storage.',
     addInstance: 'Add Instance',
+  },
+  auth: {
+    entry: 'Login Entry',
+    entries: 'Login Entries',
+    entriesDesc:
+      'The sign-in buttons shown on the login page besides username and password. Plugins provide them, and each configuration becomes one button.',
+    noTypesTitle: 'No login entry types are available yet',
+    noTypesDesc:
+      'Login entries are provided entirely by plugins. Install and enable a plugin that provides one, then configure it here.',
+    noEntries: 'No login entry has been configured yet. Use the button below to add one.',
+    instanceName: 'Entry Name',
+    instanceNameHint: 'The label of that button on the login page. Must be unique within a type.',
+    instanceNameRequired: 'Entry name cannot be empty',
+    enabled: 'Enabled',
+    noConfigForm: 'This login entry type does not provide a configuration form.',
+    identityProvider: 'Identity Binding Key',
+    identityProviderHint:
+      "Leave it empty to derive it as type{'@'}name. Only two cases need a value: adopting bindings left by an older entry, or keeping existing bindings after a rename.",
+    identityProviderEffective: 'Effective key: {identity}',
+    identityConflict:
+      'Key {identity} is already claimed by another configuration in this family, so neither will appear on the login page.',
+    identityConflictBadge: 'Key conflict',
+    identityConflictTitle: 'The following login entries are inactive because their keys collide',
+    identityConflictDesc:
+      "When several configurations claim the same identity binding key, none of them produces a login entry — letting one win would merge another server's accounts into its identity namespace. Give the value to at most one of them and leave the rest empty or different.",
   },
   serviceConfig: {
     providerIssueTitle: 'The following configurations are inactive',

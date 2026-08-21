@@ -251,6 +251,12 @@ export function getSettingTabs(t: Composer['t']): NavMenuTabItem[] {
       tab: 'notification',
       description: t('settingTabs.notification.description'),
     },
+    {
+      title: t('settingTabs.auth.title'),
+      icon: 'mdi-login-variant',
+      tab: 'auth',
+      description: t('settingTabs.auth.description'),
+    },
   ]
 }
 
