@@ -1,11 +1,16 @@
 <script lang="ts" setup>
-import type { CustomRule } from '@/api/types'
+import type { CustomRule, FilterRuleOrigin } from '@/api/types'
 import filter_svg from '@images/svg/filter.svg'
+import { useI18n } from 'vue-i18n'
 import { openSharedDialog } from '@/composables/useSharedDialog'
 import { useCardAccentColor } from '@/composables/useCardAccentColor'
+import { describeShadowedLayers } from '@/utils/filterRuleOrigin'
 
 const CustomRuleInfoDialog = defineAsyncComponent(() => import('@/components/dialog/CustomRuleInfoDialog.vue'))
 const { accentRgb, imageRef, updateAccentColor } = useCardAccentColor('#8A8D93')
+
+// 国际化
+const { t } = useI18n()
 
 // 输入参数
 const props = defineProps({
@@ -19,7 +24,15 @@ const props = defineProps({
     type: Array as PropType<CustomRule[]>,
     required: true,
   },
+  // 该规则标识的来源分层，用于标出这条自定义规则压住了谁
+  origin: {
+    type: Object as PropType<FilterRuleOrigin | null>,
+    default: null,
+  },
 })
+
+// 该规则压住的下层来源
+const shadowedTexts = computed(() => describeShadowedLayers(props.origin, t))
 
 // 定义触发的自定义事件
 const emit = defineEmits(['close', 'change', 'done'])
@@ -63,6 +76,11 @@ function onClose() {
       <div class="app-card-summary__content">
         <h5 class="app-card-summary__title text-h6">{{ props.rule.name }}</h5>
         <div class="app-card-summary__subtitle text-body-1">{{ props.rule.id }}</div>
+        <div v-if="shadowedTexts.length" class="d-flex flex-wrap gap-1 mt-1">
+          <VChip v-for="text in shadowedTexts" :key="text" size="x-small" variant="tonal" color="warning">
+            {{ text }}
+          </VChip>
+        </div>
       </div>
       <div class="app-card-summary__media" aria-hidden="true">
         <VImg ref="imageRef" :src="filter_svg" contain class="app-card-summary__image" @load="updateAccentColor" />

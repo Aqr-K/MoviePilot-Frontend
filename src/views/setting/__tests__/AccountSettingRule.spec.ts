@@ -40,11 +40,12 @@ vi.mock('@/components/cards/CustomRuleCard.vue', async () => {
   return {
     default: defineComponent({
       name: 'CustomRuleCardStub',
-      props: { rule: { type: Object, required: true } },
+      props: { rule: { type: Object, required: true }, origin: { type: Object, default: null } },
       emits: ['close', 'change'],
       template: `
         <section :aria-label="'custom-' + rule.id">
           <span>{{ rule.id }} / {{ rule.name }}</span>
+          <span :aria-label="'custom-origin-' + rule.id">{{ origin?.source?.layer ?? 'none' }}</span>
           <input
             :aria-label="'custom-id-' + rule.id"
             :value="rule.id"
@@ -67,11 +68,12 @@ vi.mock('@/components/cards/FilterRuleGroupCard.vue', async () => {
   return {
     default: defineComponent({
       name: 'FilterRuleGroupCardStub',
-      props: { group: { type: Object, required: true } },
+      props: { group: { type: Object, required: true }, origin: { type: Object, default: null } },
       emits: ['close', 'change'],
       template: `
         <section :aria-label="'group-' + group.name">
           <span>{{ group.name }}</span>
+          <span :aria-label="'group-origin-' + group.name">{{ origin?.shadowed?.length ?? 'none' }}</span>
           <input
             :aria-label="'group-name-' + group.name"
             :value="group.name"
@@ -115,9 +117,59 @@ const groupsFixture = [
   { name: '规则组3', rule_string: 'RULE3', media_type: '', category: '' },
 ]
 
+const ruleOriginsFixture = [
+  { id: 'BLU', kind: 'rule', effective: true, source: { layer: 'builtin' }, shadowed: [] },
+  {
+    id: 'PLUGINRULE',
+    kind: 'rule',
+    effective: true,
+    source: { layer: 'plugin', owner: 'DemoPlugin@alt', extension_id: 'DemoPlugin', instance_id: 'alt' },
+    shadowed: [],
+  },
+  { id: 'RULE1', kind: 'rule', effective: true, source: { layer: 'user' }, shadowed: [{ layer: 'builtin' }] },
+  // 争的是内建标识，插件声明作废后回落内建定义，规则仍然生效
+  {
+    id: '4K',
+    kind: 'rule',
+    effective: true,
+    source: { layer: 'builtin' },
+    shadowed: [],
+    conflict: { plugins: ['AlphaPlugin', 'BetaPlugin'], owners: ['AlphaPlugin', 'BetaPlugin@x'] },
+  },
+  {
+    id: 'DUPLICATED',
+    kind: 'rule',
+    effective: false,
+    source: null,
+    shadowed: [],
+    conflict: { plugins: ['AlphaPlugin', 'BetaPlugin'], owners: ['AlphaPlugin', 'BetaPlugin@x'] },
+    definition: null,
+  },
+]
+
+// 规则组没有内置层
+const groupOriginsFixture = [
+  {
+    id: '插件规则组',
+    kind: 'rule_group',
+    effective: true,
+    source: { layer: 'plugin', owner: 'DemoPlugin', extension_id: 'DemoPlugin', instance_id: null },
+    shadowed: [],
+  },
+  {
+    id: '规则组3',
+    kind: 'rule_group',
+    effective: true,
+    source: { layer: 'user' },
+    shadowed: [{ layer: 'plugin', owner: 'DemoPlugin', extension_id: 'DemoPlugin', instance_id: null }],
+  },
+]
+
 function mockLoadedRules() {
   mocks.apiGet.mockImplementation((endpoint: string) => {
     if (endpoint === 'media/category') return { 电影: ['华语'] }
+    if (endpoint === 'filterrule/rules') return { success: true, data: structuredClone(ruleOriginsFixture) }
+    if (endpoint === 'filterrule/groups') return { success: true, data: structuredClone(groupOriginsFixture) }
     if (endpoint === 'system/setting/CustomFilterRules') {
       return { success: true, data: { value: structuredClone(customRulesFixture) } }
     }
@@ -146,6 +198,12 @@ function getCommandButtons(title: string) {
   const card = screen.getByText(title).closest('.v-card')
   expect(card).not.toBeNull()
   return Array.from((card as HTMLElement).querySelectorAll<HTMLButtonElement>('button.v-btn'))
+}
+
+function getOriginSections(card: ReturnType<typeof within>) {
+  return card
+    .getAllByRole('heading')
+    .map((heading: HTMLElement) => heading.querySelector('span')?.textContent?.trim() ?? '')
 }
 
 function getImportSave(callIndex: number) {
@@ -343,6 +401,56 @@ describe('AccountSettingRule', () => {
     )
     await user.click(getCommandButtons('优先级规则组')[4])
     expect(screen.queryByText('规则组1')).not.toBeInTheDocument()
+  })
+
+  it('分层展示规则来源，并把各自的来源交给对应卡片', async () => {
+    await renderRuleSettings()
+    await screen.findByText('RULE1 / 规则1')
+
+    const ruleCard = getCard('自定义规则')
+    // 内置与插件带来的规则此前在这页上完全看不到
+    expect(getOriginSections(ruleCard)).toEqual(['内置', '插件', '用户自定义', '当前不生效'])
+    expect(ruleCard.getByText('BLU')).toBeInTheDocument()
+    expect(ruleCard.getByText('DemoPlugin · alt')).toBeInTheDocument()
+
+    // 规则组没有内置层，不能渲染一个空的内置分组
+    const groupCard = getCard('优先级规则组')
+    expect(getOriginSections(groupCard)).toEqual(['插件', '用户自定义'])
+    expect(groupCard.getByText('插件规则组')).toBeInTheDocument()
+
+    // 用户自己的卡片上要标出它压住了谁
+    expect(screen.getByLabelText('custom-origin-RULE1')).toHaveTextContent('user')
+    expect(screen.getByLabelText('group-origin-规则组3')).toHaveTextContent('1')
+    expect(screen.getByLabelText('group-origin-规则组1')).toHaveTextContent('none')
+  })
+
+  it('区分「有冲突但仍生效」与「因冲突而失效」', async () => {
+    await renderRuleSettings()
+    await screen.findByText('RULE1 / 规则1')
+    const ruleCard = getCard('自定义规则')
+
+    // 4K 争的是内建标识，插件声明作废后回落内建定义，规则照常生效
+    expect(ruleCard.getByText('插件 AlphaPlugin、BetaPlugin@x 的同名声明已作废，当前回落内置定义')).toBeInTheDocument()
+    expect(ruleCard.getAllByText('已失效')).toHaveLength(1)
+
+    // 失效的条目仍然可见，并说清涉及哪些插件
+    expect(ruleCard.getByText('DUPLICATED')).toBeInTheDocument()
+    expect(ruleCard.getByText('涉及插件：AlphaPlugin、BetaPlugin@x')).toBeInTheDocument()
+  })
+
+  it('来源接口失败时就地提示，不影响规则本身的编辑', async () => {
+    const loadedRules = mocks.apiGet.getMockImplementation()
+    mocks.apiGet.mockImplementation((endpoint: string) => {
+      if (endpoint.startsWith('filterrule/')) throw new Error('offline')
+      return loadedRules?.(endpoint)
+    })
+
+    await renderRuleSettings()
+    await screen.findByText('RULE1 / 规则1')
+
+    expect(screen.getAllByText('来源信息加载失败，不影响规则本身的编辑与保存。')).toHaveLength(2)
+    expect(screen.queryByText('暂无来源信息')).not.toBeInTheDocument()
+    expect(screen.getByText('规则组1')).toBeInTheDocument()
   })
 
   it('reports business and HTTP failures for each save responsibility', async () => {

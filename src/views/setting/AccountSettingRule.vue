@@ -3,9 +3,10 @@
 import { useToast } from 'vue-toastification'
 import { copyToClipboard } from '@/@core/utils/navigator'
 import api from '@/api'
-import { CustomRule, FilterRuleGroup } from '@/api/types'
+import { CustomRule, FilterRuleGroup, FilterRuleOrigin } from '@/api/types'
 import CustomerRuleCard from '@/components/cards/CustomRuleCard.vue'
 import FilterRuleGroupCard from '@/components/cards/FilterRuleGroupCard.vue'
+import FilterRuleOriginPanel from '@/components/misc/FilterRuleOriginPanel.vue'
 import { useI18n } from 'vue-i18n'
 import { useSilentSettingRefresh } from '@/composables/useSilentSettingRefresh'
 import { openSharedDialog } from '@/composables/useSharedDialog'
@@ -35,6 +36,23 @@ const selectedTorrentPriority = ref<string[]>(['seeder'])
 
 // 二级分类策略
 const mediaCategories = ref<{ [key: string]: any }>({})
+
+// 筛选规则标识的来源分层
+const ruleOrigins = ref<FilterRuleOrigin[]>([])
+
+// 筛选规则组名的来源分层
+const ruleGroupOrigins = ref<FilterRuleOrigin[]>([])
+
+// 来源分层是否查询失败，失败时只影响来源展示，不影响规则本身的编辑
+const ruleOriginsFailed = ref(false)
+const ruleGroupOriginsFailed = ref(false)
+
+// 来源分层是否仍在首次加载
+const originsLoading = ref(true)
+
+// 按标识索引的来源条目，供卡片标出自己压住了哪些下层
+const ruleOriginById = computed(() => new Map(ruleOrigins.value.map(origin => [origin.id, origin])))
+const ruleGroupOriginByName = computed(() => new Map(ruleGroupOrigins.value.map(origin => [origin.id, origin])))
 
 // 提示框
 const $toast = useToast()
@@ -372,8 +390,41 @@ async function saveTorrentPriority() {
   }
 }
 
+// 查询筛选规则与规则组的来源分层
+// 冲突详情已经随这两个接口一并交出，`filterrule/conflicts` 只是同样数据的过滤视图，
+// 不必多跑一趟；来源查询失败不影响规则编辑，因此静默失败并就地提示。
+async function queryRuleOrigins() {
+  try {
+    ruleOrigins.value = (await api.get<FilterRuleOrigin[]>('filterrule/rules', { feedback: 'silent' })) ?? []
+    ruleOriginsFailed.value = false
+  } catch (error) {
+    console.log(error)
+    ruleOrigins.value = []
+    ruleOriginsFailed.value = true
+  }
+}
+
+async function queryRuleGroupOrigins() {
+  try {
+    ruleGroupOrigins.value = (await api.get<FilterRuleOrigin[]>('filterrule/groups', { feedback: 'silent' })) ?? []
+    ruleGroupOriginsFailed.value = false
+  } catch (error) {
+    console.log(error)
+    ruleGroupOrigins.value = []
+    ruleGroupOriginsFailed.value = true
+  }
+}
+
 async function loadPageData() {
-  await Promise.all([loadMediaCategories(), queryCustomRules(), queryFilterRuleGroups(), queryTorrentPriority()])
+  await Promise.all([
+    loadMediaCategories(),
+    queryCustomRules(),
+    queryFilterRuleGroups(),
+    queryTorrentPriority(),
+    queryRuleOrigins(),
+    queryRuleGroupOrigins(),
+  ])
+  originsLoading.value = false
 }
 
 // 加载数据
@@ -406,11 +457,21 @@ useSilentSettingRefresh(loadPageData, {
               <CustomerRuleCard
                 :rule="element"
                 :rules="customRules"
+                :origin="ruleOriginById.get(element.id)"
                 @close="removeCustomRule(element)"
                 @change="onRuleChange"
               />
             </template>
           </Draggable>
+        </VCardText>
+        <VCardText>
+          <FilterRuleOriginPanel
+            :title="t('setting.rule.originTitle')"
+            :hint="t('setting.rule.originHint')"
+            :origins="ruleOrigins"
+            :loading="originsLoading"
+            :failed="ruleOriginsFailed"
+          />
         </VCardText>
         <VCardText>
           <VForm @submit.prevent="() => {}">
@@ -459,11 +520,21 @@ useSilentSettingRefresh(loadPageData, {
                 :groups="filterRuleGroups"
                 :custom_rules="customRules"
                 :categories="mediaCategories"
+                :origin="ruleGroupOriginByName.get(element.name)"
                 @close="removeFilterRuleGroup(element)"
                 @change="changeRuleGroup"
               />
             </template>
           </Draggable>
+        </VCardText>
+        <VCardText>
+          <FilterRuleOriginPanel
+            :title="t('setting.rule.originGroupTitle')"
+            :hint="t('setting.rule.originGroupHint')"
+            :origins="ruleGroupOrigins"
+            :loading="originsLoading"
+            :failed="ruleGroupOriginsFailed"
+          />
         </VCardText>
         <VCardText>
           <VForm @submit.prevent="() => {}">

@@ -2295,3 +2295,41 @@ export interface MetaParserOrderEntry {
   // 是否参与解析
   enabled: boolean
 }
+
+// 一条筛选规则或规则组在某一层的来源
+export interface FilterRuleLayer {
+  // 来源层：builtin 内置、plugin 插件、user 用户自定义
+  layer: string
+  // 插件实例键，形如 DemoPlugin@alt；内置与用户自定义层为 null
+  owner?: string | null
+  // 插件标识；内置与用户自定义层为 null
+  extension_id?: string | null
+  // 插件分身标识；内置与用户自定义层为 null
+  instance_id?: string | null
+}
+
+// 一个标识被多个插件同时声明而使插件声明整体失效的详情
+export interface FilterRuleConflict {
+  // 声明该标识的插件标识，已排序
+  plugins: string[]
+  // 与 plugins 一一对应的插件实例键
+  owners: string[]
+}
+
+// 一个筛选规则标识或规则组名在运行期规则集中的来源分层
+export interface FilterRuleOrigin {
+  // 规则标识或规则组名
+  id: string
+  // 标识种类：rule 筛选规则、rule_group 筛选规则组
+  kind: string
+  // 该标识当前是否出现在运行期规则集中
+  effective: boolean
+  // 交出当前生效定义的那一层
+  source?: FilterRuleLayer | null
+  // 被上层压住、当前不生效的下层来源，按内置到插件的次序排列
+  shadowed: FilterRuleLayer[]
+  // 该标识的插件声明因跨插件同名而整体失效时的详情；有冲突不等于该标识失效
+  conflict?: FilterRuleConflict | null
+  // 当前生效的定义内容，不生效时为 null
+  definition?: unknown
+}

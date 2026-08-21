@@ -1,11 +1,14 @@
 <script lang="ts" setup>
-import type { CustomRule, FilterRuleGroup } from '@/api/types'
+import type { CustomRule, FilterRuleGroup, FilterRuleOrigin } from '@/api/types'
 import filter_group_svg from '@images/svg/filter-group.svg'
 import { useI18n } from 'vue-i18n'
 import { openSharedDialog } from '@/composables/useSharedDialog'
 import { useCardAccentColor } from '@/composables/useCardAccentColor'
+import { describeShadowedLayers } from '@/utils/filterRuleOrigin'
 
-const FilterRuleGroupInfoDialog = defineAsyncComponent(() => import('@/components/dialog/FilterRuleGroupInfoDialog.vue'))
+const FilterRuleGroupInfoDialog = defineAsyncComponent(
+  () => import('@/components/dialog/FilterRuleGroupInfoDialog.vue'),
+)
 
 // 获取i18n实例
 const { t } = useI18n()
@@ -30,10 +33,18 @@ const props = defineProps({
   },
   // 自定义规则列表
   custom_rules: Array as PropType<CustomRule[]>,
+  // 该规则组名的来源分层，用于标出这个规则组压住了谁
+  origin: {
+    type: Object as PropType<FilterRuleOrigin | null>,
+    default: null,
+  },
 })
 
 // 定义触发的自定义事件
 const emit = defineEmits(['close', 'change', 'done'])
+
+// 该规则组压住的下层来源
+const shadowedTexts = computed(() => describeShadowedLayers(props.origin, t))
 
 /** 打开共享过滤规则组配置弹窗。 */
 function openGroupInfoDialog() {
@@ -44,6 +55,7 @@ function openGroupInfoDialog() {
       groups: props.groups,
       categories: props.categories,
       custom_rules: props.custom_rules,
+      origin: props.origin,
     },
     {
       change: (...args: unknown[]) => emit('change', ...args),
@@ -79,9 +91,20 @@ function onClose() {
           <span v-if="!props.group.category">{{ props.group.media_type || t('common.all') }}</span>
           <span v-else>{{ props.group.category }}</span>
         </div>
+        <div v-if="shadowedTexts.length" class="d-flex flex-wrap gap-1 mt-1">
+          <VChip v-for="text in shadowedTexts" :key="text" size="x-small" variant="tonal" color="warning">
+            {{ text }}
+          </VChip>
+        </div>
       </div>
       <div class="app-card-summary__media" aria-hidden="true">
-        <VImg ref="imageRef" :src="filter_group_svg" contain class="app-card-summary__image" @load="updateAccentColor" />
+        <VImg
+          ref="imageRef"
+          :src="filter_group_svg"
+          contain
+          class="app-card-summary__image"
+          @load="updateAccentColor"
+        />
       </div>
     </VCardText>
   </VCard>

@@ -2693,6 +2693,26 @@ export default {
       duplicateValue: 'Duplicate values exist',
       importNoId: 'Import failed! Found rules without IDs, may belong to priority rule groups!',
       importHasId: 'Import failed! Found rules with IDs, may belong to custom rules!',
+      originTitle: 'Rule Sources',
+      originHint:
+        'The runtime rule set merges builtin < plugin < user; on a name clash the user-defined rule always wins.',
+      originGroupTitle: 'Rule Group Sources',
+      originGroupHint:
+        'Rule groups only have a plugin layer and a user layer; on a name clash the user-configured group always wins.',
+      originLayerBuiltin: 'Builtin',
+      originLayerPlugin: 'Plugin',
+      originLayerUser: 'User-defined',
+      originShadowedTag: 'Overrides {source}',
+      originShadowedGroupHint:
+        'This group name overrides the group of the same name from {sources}; renaming or deleting it brings the overridden group back.',
+      originConflictFallbackTag: 'Declaration from plugin {plugins} was voided, currently falling back to {source}',
+      originIneffectiveTitle: 'Currently ineffective',
+      originIneffectiveHint:
+        'Several plugins declared the same identifier and the host cannot decide which one is right, so all of the declarations are voided. Ask one side to change its identifier or disable that plugin, or simply add a custom rule with the same name to take over.',
+      originIneffectiveTag: 'Voided',
+      originConflictPlugins: 'Plugins involved: {plugins}',
+      originLoadFailed: 'Failed to load source information. Editing and saving rules is unaffected.',
+      originEmpty: 'No source information',
     },
     scheduler: {
       title: 'Scheduled Jobs',
