@@ -3,6 +3,7 @@ import api from '@/api'
 import { StorageConf } from '@/api/types'
 import { Handle, Position } from '@vue-flow/core'
 import { useI18n } from 'vue-i18n'
+import { storageTokenOfConf } from '@/utils/storageToken'
 
 const { t } = useI18n()
 
@@ -26,11 +27,11 @@ async function loadStorages() {
   storages.value = result.value ?? []
 }
 
-// 存储字典
+// 存储字典，取值为存储令牌，同类型的多份实例才带实例名后缀
 const storageOptions = computed(() => {
   return storages.value.map(item => ({
     title: item.name,
-    value: item.type,
+    value: storageTokenOfConf(item),
   }))
 })
 

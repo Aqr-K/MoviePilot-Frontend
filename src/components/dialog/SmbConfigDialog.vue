@@ -1,5 +1,7 @@
 <script lang="ts" setup>
 import { manageStorage } from '@/api/manage'
+import { updateServiceConfig } from '@/api/serviceConfig'
+import type { StorageConf } from '@/api/types'
 import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
 
@@ -15,6 +17,16 @@ const props = defineProps({
     type: Object as PropType<{ [key: string]: any }>,
     required: true,
   },
+  // 存储令牌，同一类型配了多份实例时用它指到具体那一份
+  storage: {
+    type: String,
+    default: 'smb',
+  },
+  // 所属存储实例的整条配置，交出类型与实例名供配置保存指到具体那一行
+  storageConf: {
+    type: Object as PropType<StorageConf>,
+    default: undefined,
+  },
 })
 
 // 定义事件
@@ -29,7 +41,7 @@ async function handleDone() {
 // 重置配置
 async function handleReset() {
   try {
-    await manageStorage('smb', 'reset_config')
+    await manageStorage(props.storage, 'reset_config')
     // 重置成功
     handleDone()
   } catch (e) {
@@ -40,7 +52,14 @@ async function handleReset() {
 // 保存 SMB 设置
 async function saveSmbConfig() {
   try {
-    await manageStorage('smb', 'save_config', { conf: props.conf })
+    const instance = props.storageConf
+    if (instance?.type && instance?.name) {
+      // 走实例配置端点：凭据掩码原样回传即表示该项未改动，服务端从库里取回原值；
+      // 按令牌整份替换的旧路径不还原掩码，只改一个地址就会把掩码本身写成新密码
+      await updateServiceConfig('storage', instance.type, instance.name, { ...instance, config: props.conf })
+    } else {
+      await manageStorage(props.storage, 'save_config', { conf: props.conf })
+    }
   } catch (e) {
     console.error(e)
   }

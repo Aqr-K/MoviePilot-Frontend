@@ -25,6 +25,7 @@ import { useDisplay } from 'vuetify'
 import { useGlobalSettingsStore } from '@/stores'
 import { isMusicMediaSource, isValidMediaSourceId } from '@/utils/mediaId'
 import { useMediaSources } from '@/composables/useMediaSources'
+import { storageTokenOfConf } from '@/utils/storageToken'
 
 // 国际化
 const { t } = useI18n()
@@ -222,7 +223,7 @@ async function loadStorages() {
   }
 }
 
-// 存储字典
+// 存储字典，取值为存储令牌，同类型的多份实例才带实例名后缀
 const storageOptions = computed(() => {
   return [
     {
@@ -231,7 +232,7 @@ const storageOptions = computed(() => {
     },
     ...storages.value.map(item => ({
       title: item.name,
-      value: item.type,
+      value: storageTokenOfConf(item),
     })),
   ]
 })
@@ -1522,11 +1523,7 @@ onUnmounted(() => {
                       prepend-inner-icon="mdi-music-box-multiple"
                     />
                   </VCol>
-                  <VCol
-                    v-if="transferForm.type_name !== ''"
-                    cols="12"
-                    :md="transferForm.type_name === '音乐' ? 3 : 4"
-                  >
+                  <VCol v-if="transferForm.type_name !== ''" cols="12" :md="transferForm.type_name === '音乐' ? 3 : 4">
                     <VTextField
                       v-model="transferForm.media_id"
                       :label="mediaIdLabel"

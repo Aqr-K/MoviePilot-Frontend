@@ -305,6 +305,9 @@ export default defineConfig(({ command, mode, isPreview }) => ({
     coverage: {
       include: [
         'src/api/manage.ts',
+        'src/api/serviceConfig.ts',
+        'src/utils/storageToken.ts',
+        'src/composables/useServiceConfigs.ts',
         'src/utils/recommendSources.ts',
         'src/utils/permission.ts',
         'src/utils/pluginSidebarNav.ts',

@@ -289,7 +289,9 @@ describe('AddDownloadDialog directories', () => {
     expect(await screen.findByRole('option', { name: '/downloads/local' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: '/downloads/legacy' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: '/downloads/null-storage' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: ':/downloads/empty-storage' })).toBeInTheDocument()
+    // 空存储表示「没有存储前缀」，而不是一个名为空串的存储；旧写法拼出的 :{path} 是个畸形 URI
+    expect(screen.getByRole('option', { name: '/downloads/empty-storage' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: ':/downloads/empty-storage' })).not.toBeInTheDocument()
     expect(screen.getAllByRole('option', { name: 'rclone:/downloads/remote' })).toHaveLength(1)
     expect(screen.queryByText('undefined:/downloads/legacy')).not.toBeInTheDocument()
     expect(screen.queryByText('null:/downloads/null-storage')).not.toBeInTheDocument()

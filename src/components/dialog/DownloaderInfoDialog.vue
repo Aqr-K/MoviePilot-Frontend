@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import type { DownloaderConf } from '@/api/types'
-import { storageAttributes } from '@/api/constants'
+import type { DownloaderConf, StorageConf } from '@/api/types'
+import api from '@/api'
+import { joinStorageUri, pathOfUri, storageOfUri, storageTokenOfConf, LOCAL_STORAGE_TYPE } from '@/utils/storageToken'
 import { cloneDeep } from 'lodash-es'
 import { useToast } from 'vue-toastification'
 import { useI18n } from 'vue-i18n'
@@ -66,50 +67,43 @@ interface PathMappingRow {
 // 路径映射行数据
 const pathMappingRows = ref<PathMappingRow[]>([])
 
-// 路径前缀选项
+// 所有存储实例
+const storages = ref<StorageConf[]>([])
+
+// 路径前缀选项，选项值是完整存储令牌，同一存储类型下的多份实例才能各自选中
 const prefixOptions = computed(() => {
-  return storageAttributes.map(item => ({
-    title: t(`storage.${item.type}`),
-    value: item.type,
-  }))
+  const options = storages.value.map(item => {
+    const token = storageTokenOfConf(item)
+    return { title: item.name || token, value: token }
+  })
+  // 实例列表尚未加载或为空时至少给出本地存储，选项不会空着
+  return options.length > 0 ? options : [{ title: t('storage.local'), value: LOCAL_STORAGE_TYPE }]
 })
 
-/** 获取路径所属的存储类型。 */
-function getStorageType(path: string) {
-  if (!path) return 'local'
-  const storage = storageAttributes.find(s => s.type !== 'local' && path.startsWith(`${s.type}:`))
-  return storage?.type || 'local'
+/** 查询存储实例列表。 */
+async function loadStorages() {
+  try {
+    const result = await api.get<{ value?: StorageConf[] }>('system/setting/public/Storages')
+    storages.value = result.value ?? []
+  } catch (error) {
+    console.log(error)
+  }
 }
 
-/** 将存储类型转换为路径前缀。 */
-function storage2Prefix(storage: string) {
-  return storage === 'local' ? '' : storage + ':'
-}
-
-/** 拆分存储路径的前缀和真实路径。 */
-function parseStoragePath(path: string): [prefix: string, suffix: string] {
-  if (!path) return ['', '']
-  const storage = getStorageType(path)
-  const prefix = storage2Prefix(storage)
-  return [prefix, path.slice(prefix.length)]
-}
-
-/** 更新单行路径映射的存储前缀。 */
+/** 更新单行路径映射的存储令牌，路径部分保持不变。 */
 function updateStoragePrefix(row: PathMappingRow, storage: string) {
-  const [, currentSuffix] = parseStoragePath(row.storage)
-  const prefix = storage2Prefix(storage)
-  row.storage = prefix + currentSuffix
+  row.storage = joinStorageUri(storage, pathOfUri(row.storage))
 }
 
-/** 更新单行路径映射的存储路径主体。 */
-function updateStorageSuffix(row: PathMappingRow, suffix: string) {
-  const [currentPrefix] = parseStoragePath(row.storage)
-  row.storage = currentPrefix + suffix
+/** 更新单行路径映射的存储路径主体，存储令牌保持不变。 */
+function updateStorageSuffix(row: PathMappingRow, path: string) {
+  row.storage = joinStorageUri(storageOfUri(row.storage), path)
 }
 
 const pathValidationRules = [
   (v: string) => !!v || t('downloader.pathMappingRequired'),
-  (v: string) => v.startsWith('/') || t('downloader.pathMappingError'),
+  // 存储侧的值可能带 u115@work: 这样的存储前缀，只校验去掉前缀后的路径部分
+  (v: string) => pathOfUri(v).startsWith('/') || t('downloader.pathMappingError'),
 ]
 
 /** 生成路径映射行使用的临时唯一 ID。 */
@@ -182,6 +176,7 @@ function removePathMapping(index: number) {
 
 onMounted(() => {
   initializeDownloaderInfo()
+  loadStorages()
 })
 </script>
 
@@ -468,7 +463,7 @@ onMounted(() => {
                       <VRow no-gutters>
                         <VCol cols="12" sm="4" class="path-storage-select-col pe-sm-2">
                           <VSelect
-                            :model-value="getStorageType(row.storage)"
+                            :model-value="storageOfUri(row.storage)"
                             :items="prefixOptions"
                             density="compact"
                             variant="outlined"
@@ -478,7 +473,7 @@ onMounted(() => {
                         </VCol>
                         <VCol cols="12" sm="8">
                           <VTextField
-                            :model-value="parseStoragePath(row.storage)[1]"
+                            :model-value="pathOfUri(row.storage)"
                             :placeholder="'/path/to/storage'"
                             density="compact"
                             variant="outlined"

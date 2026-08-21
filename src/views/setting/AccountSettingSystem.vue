@@ -7,11 +7,14 @@ import { useGlobalSettingsStore } from '@/stores'
 import { DownloaderConf, MediaServerConf } from '@/api/types'
 import DownloaderCard from '@/components/cards/DownloaderCard.vue'
 import MediaServerCard from '@/components/cards/MediaServerCard.vue'
+import ServiceProviderIssues from '@/components/misc/ServiceProviderIssues.vue'
 import { copyToClipboard } from '@/@core/utils/navigator'
 import { useI18n } from 'vue-i18n'
 import { downloaderOptions, mediaServerOptions } from '@/api/constants'
 import { useDisplay, useTheme } from 'vuetify'
 import { useLlmProviderDirectory } from '@/composables/useLlmProviderDirectory'
+import { useServiceConfigs } from '@/composables/useServiceConfigs'
+import type { ServiceInstanceForm } from '@/api/serviceConfig'
 import { useSilentSettingRefresh } from '@/composables/useSilentSettingRefresh'
 import { openSharedDialog } from '@/composables/useSharedDialog'
 
@@ -219,14 +222,70 @@ const ScrapingPolicies = ref<Record<string, ScrapingPolicy>>(
 // 是否发送请求的总开关
 const isRequest = ref(true)
 
-// 选中的媒体服务器
-const mediaServers = ref<MediaServerConf[]>([])
+// 媒体服务器实例配置，增删改各自走服务实例配置端点，写完即刻生效
+const {
+  configs: mediaServerConfigs,
+  types: mediaServerTypes,
+  canAddInstance: canAddMediaServer,
+  load: loadMediaServers,
+  addConfig: addMediaServerConfig,
+  changeConfig: changeMediaServerConfig,
+  removeConfig: removeMediaServerConfig,
+} = useServiceConfigs('mediaserver')
+
+// 选中的媒体服务器。拖拽排序只改本页展示顺序，逐条写入的端点不记顺序
+const mediaServers = computed<MediaServerConf[]>({
+  get: () => mediaServerConfigs.value as MediaServerConf[],
+  set: value => {
+    mediaServerConfigs.value = value as ServiceInstanceForm[]
+  },
+})
 
 // 旧版全局媒体服务器同步间隔，仅用于未单独设置时的默认值提示
 const legacyMediaServerSyncInterval = ref<number | null>(null)
 
-// 下载器
-const downloaders = ref<DownloaderConf[]>([])
+// 下载器实例配置，默认调用目标另走专用端点，不随配置载荷写入
+const {
+  configs: downloaderConfigs,
+  types: downloaderTypes,
+  canAddInstance: canAddDownloader,
+  supportsDefaultTarget: downloaderSupportsDefaultTarget,
+  load: loadDownloaders,
+  addConfig: addDownloaderConfig,
+  changeConfig: changeDownloaderConfig,
+  removeConfig: removeDownloaderConfig,
+  applyDefaultTarget: applyDownloaderDefaultTarget,
+} = useServiceConfigs('downloader')
+
+// 下载器。拖拽排序只改本页展示顺序，逐条写入的端点不记顺序
+const downloaders = computed<DownloaderConf[]>({
+  get: () => downloaderConfigs.value as DownloaderConf[],
+  set: value => {
+    downloaderConfigs.value = value as ServiceInstanceForm[]
+  },
+})
+
+/**
+ * 可新增配置的下载器类型。
+ *
+ * 内建类型登记在内建模块的清单里、不在服务实例登记表中，宿主没有一份跨两处的全量目录，
+ * 因此把内建类型表与登记表下发的扩展类型并起来才是完整的类型菜单；能不能再加一份由
+ * canAddInstance 按 multi_instance 判定，而不是按「这个类型有没有配过」一刀切。
+ */
+const downloaderTypeOptions = computed(() => {
+  const registeredOptions = downloaderTypes.value
+    .filter(item => !downloaderOptions.some(builtin => builtin.value === item.type))
+    .map(item => ({ title: item.name, value: item.type }))
+  return [...downloaderOptions, ...registeredOptions].filter(item => canAddDownloader(item.value))
+})
+
+// 可新增配置的媒体服务器类型，取用口径与下载器一致
+const mediaServerTypeOptions = computed(() => {
+  const registeredOptions = mediaServerTypes.value
+    .filter(item => !mediaServerOptions.some(builtin => builtin.value === item.type))
+    .map(item => ({ title: item.name, value: item.type }))
+  return [...mediaServerOptions, ...registeredOptions].filter(item => canAddMediaServer(item.value))
+})
 
 // 提示框
 const $toast = useToast()
@@ -712,71 +771,23 @@ function addImageProxyAllowedPrivateRange() {
   }
 }
 
-// 调用API查询下载器设置
-async function loadDownloaderSetting() {
+// 读取下载器实例配置，失败时保留上一轮内容而不是清空
+async function refreshDownloaders() {
   try {
-    const result = await api.get<{ value?: DownloaderConf[] }>('system/setting/Downloaders')
-    downloaders.value = result.value ?? []
+    await loadDownloaders()
   } catch (error) {
     console.log(error)
+    $toast.error(t('serviceConfig.loadFailed'))
   }
 }
 
-// 调用API保存下载器设置
-async function saveDownloaderSetting() {
+// 读取媒体服务器实例配置，失败时保留上一轮内容而不是清空
+async function refreshMediaServers() {
   try {
-    // 提取启用的下载器
-    const enabledDownloaders = downloaders.value.filter(item => item.enabled)
-    // 有启动的下载器时
-    if (enabledDownloaders.length > 0) {
-      downloaders.value = handleDefaultDownloaders(enabledDownloaders, downloaders.value)
-    }
-    await api.post('system/setting/Downloaders', downloaders.value, { feedback: 'silent' })
-    $toast.success(t('setting.system.downloaderSaveSuccess'))
-
-    await loadDownloaderSetting()
+    await loadMediaServers()
   } catch (error) {
     console.log(error)
-    $toast.error(t('setting.system.downloaderSaveFailed'))
-  }
-}
-
-// 处理默认下载器状态
-function handleDefaultDownloaders(enabledDownloaders: DownloaderConf[], currentDownloaders: DownloaderConf[]) {
-  const enabledDefaultDownloader = enabledDownloaders.find(item => item.default)
-  if (enabledDownloaders.length > 0 && !enabledDefaultDownloader) {
-    return currentDownloaders.map(item => {
-      if (item === enabledDownloaders[0]) {
-        $toast.info(t('setting.system.defaultDownloaderNotice', { name: item.name }))
-        return { ...item, default: true }
-      }
-      // 清除其他下载器的默认下载器状态
-      return { ...item, default: false }
-    })
-  }
-  return currentDownloaders
-}
-
-// 调用API查询媒体服务器设置
-async function loadMediaServerSetting() {
-  try {
-    const result = await api.get<{ value?: MediaServerConf[] }>('system/setting/MediaServers')
-    mediaServers.value = result.value ?? []
-  } catch (error) {
-    console.log(error)
-  }
-}
-
-// 调用API保存媒体服务器设置
-async function saveMediaServerSetting() {
-  try {
-    await api.post('system/setting/MediaServers', mediaServers.value, { feedback: 'silent' })
-    $toast.success(t('setting.system.mediaServerSaveSuccess'))
-
-    await loadMediaServerSetting()
-  } catch (error) {
-    console.log(error)
-    $toast.error(t('setting.system.mediaServerSaveFailed'))
+    $toast.error(t('serviceConfig.loadFailed'))
   }
 }
 
@@ -1021,57 +1032,86 @@ function createRandomString() {
   SystemSettings.value.Basic.API_TOKEN = Array.from(array, byte => charset[byte % charset.length]).join('')
 }
 
-// 添加下载器
-function addDownloader(downloader: string) {
+// 添加下载器，新增的实例一律不是默认调用目标
+async function addDownloader(downloader: string) {
   let name = `下载器${downloaders.value.length + 1}`
   while (downloaders.value.some(item => item.name === name)) {
     name = `下载器${parseInt(name.split('下载器')[1]) + 1}`
   }
-  downloaders.value.push({
-    name: name,
-    type: downloader,
-    default: false,
-    enabled: false,
-    config: {},
-  })
+  try {
+    await addDownloaderConfig({ name, type: downloader, enabled: false, config: {} })
+    $toast.success(t('serviceConfig.saveSuccess'))
+  } catch (error) {
+    console.log(error)
+    $toast.error(t('serviceConfig.createFailed'))
+  }
 }
 
-// 删除下载器
-function removeDownloader(ele: DownloaderConf) {
-  const index = downloaders.value.indexOf(ele)
-  downloaders.value.splice(index, 1)
+// 删除下载器，同族其余配置不受影响
+async function removeDownloader(ele: ServiceInstanceForm) {
+  try {
+    await removeDownloaderConfig(ele)
+  } catch (error) {
+    console.log(error)
+    $toast.error(t('serviceConfig.deleteFailed'))
+  }
 }
 
-// 下载器变化
-function onDownloaderChange(downloader: DownloaderConf, name: string) {
-  const index = downloaders.value.findIndex(item => item.name === name)
-  if (index !== -1) downloaders.value[index] = downloader
+/**
+ * 保存下载器实例的改动。
+ *
+ * `name` 是这条配置改动前的实例名，用于在库里定位那一行，与表单上的实例名不同即为改名。
+ * 默认调用目标另走专用端点：置位受「每族至多一个」的唯一索引管辖，混进配置写入会让一次
+ * 改端口号顺带把别人的置位清掉，故只在用户确实动了这个开关时才发请求；没有默认调用目标
+ * 的族连这个开关都不给出，表单上带回来的 default 一律不当真。
+ */
+async function onDownloaderChange(downloader: ServiceInstanceForm, name: string) {
+  const wasDefaultTarget = !!downloaders.value.find(item => item.name === name)?.default
+  const defaultTargetChanged = downloaderSupportsDefaultTarget.value && !!downloader.default !== wasDefaultTarget
+  try {
+    await changeDownloaderConfig(downloader, name)
+    if (defaultTargetChanged) await applyDownloaderDefaultTarget(downloader.default ? downloader : undefined)
+    $toast.success(t('serviceConfig.saveSuccess'))
+  } catch (error) {
+    console.log(error)
+    $toast.error(t('serviceConfig.updateFailed'))
+  }
 }
 
 // 添加媒体服务器
-function addMediaServer(mediaserver: string) {
+async function addMediaServer(mediaserver: string) {
   let name = `服务器${mediaServers.value.length + 1}`
   while (mediaServers.value.some(item => item.name === name)) {
     name = `服务器${parseInt(name.split('服务器')[1]) + 1}`
   }
-  mediaServers.value.push({
-    name: name,
-    type: mediaserver,
-    enabled: false,
-    config: {},
-  })
+  try {
+    await addMediaServerConfig({ name, type: mediaserver, enabled: false, config: {} })
+    $toast.success(t('serviceConfig.saveSuccess'))
+  } catch (error) {
+    console.log(error)
+    $toast.error(t('serviceConfig.createFailed'))
+  }
 }
 
-// 删除媒体服务器
-function removeMediaServer(ele: MediaServerConf) {
-  const index = mediaServers.value.indexOf(ele)
-  if (index !== -1) mediaServers.value.splice(index, 1)
+// 删除媒体服务器，同族其余配置不受影响
+async function removeMediaServer(ele: ServiceInstanceForm) {
+  try {
+    await removeMediaServerConfig(ele)
+  } catch (error) {
+    console.log(error)
+    $toast.error(t('serviceConfig.deleteFailed'))
+  }
 }
 
-// 变更媒体服务器
-function onMediaServerChange(mediaserver: MediaServerConf, name: string) {
-  const index = mediaServers.value.findIndex(item => item.name === name)
-  if (index !== -1) mediaServers.value[index] = mediaserver
+// 变更媒体服务器，`name` 是这条配置改动前的实例名，与表单上的实例名不同即为改名
+async function onMediaServerChange(mediaserver: ServiceInstanceForm, name: string) {
+  try {
+    await changeMediaServerConfig(mediaserver, name)
+    $toast.success(t('serviceConfig.saveSuccess'))
+  } catch (error) {
+    console.log(error)
+    $toast.error(t('serviceConfig.updateFailed'))
+  }
 }
 
 // 添加计算属性
@@ -1127,7 +1167,7 @@ async function saveScrapingSwitchs() {
 
 // 加载数据
 async function loadPageData() {
-  await Promise.all([loadDownloaderSetting(), loadMediaServerSetting(), loadSystemSettings(), loadScrapingSwitchs()])
+  await Promise.all([refreshDownloaders(), refreshMediaServers(), loadSystemSettings(), loadScrapingSwitchs()])
 }
 
 onMounted(loadPageData)
@@ -1175,6 +1215,7 @@ watch(currentLlmSnapshotKey, (snapshotKey, previousSnapshotKey) => {
 <template>
   <VRow>
     <VCol cols="12">
+      <ServiceProviderIssues />
       <VCard>
         <VCardItem>
           <VCardTitle>{{ t('setting.system.basicSettings') }}</VCardTitle>
@@ -1881,26 +1922,21 @@ watch(currentLlmSnapshotKey, (snapshotKey, previousSnapshotKey) => {
           </Draggable>
         </VCardText>
         <VCardText>
-          <VForm @submit.prevent="() => {}">
-            <div class="d-flex flex-wrap gap-4 mt-4">
-              <VBtn type="submit" @click="saveDownloaderSetting" prepend-icon="mdi-content-save">
-                {{ t('common.save') }}
-              </VBtn>
-              <VBtn color="success" variant="tonal">
-                <VIcon icon="mdi-plus" />
-                <VMenu activator="parent" close-on-content-click>
-                  <VList>
-                    <VListItem v-for="item in downloaderOptions" :key="item.value" @click="addDownloader(item.value)">
-                      <VListItemTitle>{{ item.title }}</VListItemTitle>
-                    </VListItem>
-                    <VListItem @click="addDownloader('custom')">
-                      <VListItemTitle>{{ t('setting.system.custom') }}</VListItemTitle>
-                    </VListItem>
-                  </VList>
-                </VMenu>
-              </VBtn>
-            </div>
-          </VForm>
+          <div class="d-flex flex-wrap gap-4 mt-4">
+            <VBtn color="success" variant="tonal">
+              <VIcon icon="mdi-plus" />
+              <VMenu activator="parent" close-on-content-click>
+                <VList>
+                  <VListItem v-for="item in downloaderTypeOptions" :key="item.value" @click="addDownloader(item.value)">
+                    <VListItemTitle>{{ item.title }}</VListItemTitle>
+                  </VListItem>
+                  <VListItem @click="addDownloader('custom')">
+                    <VListItemTitle>{{ t('setting.system.custom') }}</VListItemTitle>
+                  </VListItem>
+                </VList>
+              </VMenu>
+            </VBtn>
+          </div>
         </VCardText>
       </VCard>
     </VCol>
@@ -1932,26 +1968,25 @@ watch(currentLlmSnapshotKey, (snapshotKey, previousSnapshotKey) => {
           </Draggable>
         </VCardText>
         <VCardText>
-          <VForm @submit.prevent="() => {}">
-            <div class="d-flex flex-wrap gap-4 mt-4">
-              <VBtn type="submit" @click="saveMediaServerSetting" prepend-icon="mdi-content-save">
-                {{ t('common.save') }}
-              </VBtn>
-              <VBtn color="success" variant="tonal">
-                <VIcon icon="mdi-plus" />
-                <VMenu activator="parent" close-on-content-click>
-                  <VList>
-                    <VListItem v-for="item in mediaServerOptions" :key="item.value" @click="addMediaServer(item.value)">
-                      <VListItemTitle>{{ item.title }}</VListItemTitle>
-                    </VListItem>
-                    <VListItem @click="addMediaServer('custom')">
-                      <VListItemTitle>{{ t('setting.system.custom') }}</VListItemTitle>
-                    </VListItem>
-                  </VList>
-                </VMenu>
-              </VBtn>
-            </div>
-          </VForm>
+          <div class="d-flex flex-wrap gap-4 mt-4">
+            <VBtn color="success" variant="tonal">
+              <VIcon icon="mdi-plus" />
+              <VMenu activator="parent" close-on-content-click>
+                <VList>
+                  <VListItem
+                    v-for="item in mediaServerTypeOptions"
+                    :key="item.value"
+                    @click="addMediaServer(item.value)"
+                  >
+                    <VListItemTitle>{{ item.title }}</VListItemTitle>
+                  </VListItem>
+                  <VListItem @click="addMediaServer('custom')">
+                    <VListItemTitle>{{ t('setting.system.custom') }}</VListItemTitle>
+                  </VListItem>
+                </VList>
+              </VMenu>
+            </VBtn>
+          </div>
         </VCardText>
       </VCard>
     </VCol>

@@ -8,6 +8,7 @@ import { useI18n } from 'vue-i18n'
 import MediaIdSelector from '../misc/MediaIdSelector.vue'
 import { useGlobalSettingsStore } from '@/stores'
 import { isMediaDataSource, isValidMediaSourceId } from '@/utils/mediaId'
+import { joinStorageUri } from '@/utils/storageToken'
 import { useMediaSources } from '@/composables/useMediaSources'
 
 // 多语言支持
@@ -125,11 +126,8 @@ function convertToUri(item: TransferDirectoryConf) {
   if (!item.download_path) {
     return undefined
   }
-  // storage 缺省是受支持的本地目录配置，不能生成 undefined/null 前缀。
-  if (item.storage === undefined || item.storage === null || item.storage === 'local') {
-    return item.download_path
-  }
-  return item.storage + ':' + item.download_path
+  // 本地存储与缺省存储都直接给出裸路径，其余按 存储令牌:路径 拼成文件 URI。
+  return joinStorageUri(item.storage, item.download_path)
 }
 
 // 获取保存目录

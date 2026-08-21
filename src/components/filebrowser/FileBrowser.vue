@@ -9,6 +9,7 @@ import { useDynamicButton } from '@/composables/useDynamicButton'
 import { usePWA } from '@/composables/usePWA'
 import { useUserStore } from '@/stores'
 import { buildUserPermissionContext, hasPermission } from '@/utils/permission'
+import { storageTokenOfConf } from '@/utils/storageToken'
 
 // LocalStorage keys
 const SORT_KEY = 'fileBrowser.sort'
@@ -181,11 +182,11 @@ watch(navigatorWidth, val => {
   localStorage.setItem(NAV_WIDTH_KEY, String(val))
 })
 
-// 计算属性
+// 计算属性，取值为存储令牌；图标按存储类型取，同类型的多份实例共用一个图标
 const storagesArray = computed(() => {
   return props.storages?.map(item => ({
     title: item.name,
-    value: item.type,
+    value: storageTokenOfConf(item),
     icon: storageIconDict[item.type] ?? 'mdi-server-network-outline',
   }))
 })

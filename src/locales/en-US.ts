@@ -1520,6 +1520,35 @@ export default {
     alistgo: 'AList',
     smb: 'SMB Network Share',
     custom: 'Custom',
+    instanceName: 'Instance Name',
+    instanceNameHint: "Unique within a storage type; joined with the type into a token such as u115{'@'}work",
+    instanceNameInvalid: "Instance name cannot be empty and cannot contain whitespace or : / \\ {'@'}",
+    bareTokenTarget: 'Receives paths without an instance name',
+    bareTokenTargetHint:
+      'Paths of this storage type that omit the instance name resolve here. Only one per type, and it is not the same as the default storage.',
+    addInstance: 'Add Instance',
+  },
+  serviceConfig: {
+    providerIssueTitle: 'The following configurations are inactive',
+    providerIssueDesc:
+      'The plugins providing these service types are absent. The configurations remain stored and take effect again once the provider returns.',
+    reasonNotInstalled: 'Provider {extension} is not installed. Reinstall the plugin to restore it.',
+    reasonDisabled: 'Provider {extension} is installed but disabled. Enable the plugin to restore it.',
+    reasonStartFailed:
+      'Provider {extension} is enabled, but service type {type} failed to register. Check the plugin logs.',
+    reasonUnknown: 'Provider {extension} is currently unavailable',
+    typeUnavailable: 'This service type is currently unavailable',
+    defaultTarget: 'Default Target',
+    defaultTargetHint: 'The instance used when a call does not name one. At most one per family.',
+    singleInstanceOnly: 'This type accepts only one configuration',
+    maskedSecretHint:
+      'Credentials are hidden. Leave them untouched to keep the stored value; type a new one to replace it.',
+    createFailed: 'Failed to create the configuration!',
+    updateFailed: 'Failed to update the configuration!',
+    deleteFailed: 'Failed to delete the configuration!',
+    defaultTargetFailed: 'Failed to set the default target!',
+    loadFailed: 'Failed to load the configurations!',
+    saveSuccess: 'Configuration saved',
   },
   filterRules: {
     specSub: 'Special Subtitle',

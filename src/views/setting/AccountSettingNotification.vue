@@ -4,9 +4,12 @@ import api from '@/api'
 import { manageNotificationChannel } from '@/api/manage'
 import type { NotificationConf, NotificationSwitchConf } from '@/api/types'
 import NotificationChannelCard from '@/components/cards/NotificationChannelCard.vue'
+import ServiceProviderIssues from '@/components/misc/ServiceProviderIssues.vue'
 import { useI18n } from 'vue-i18n'
 import { notificationSwitchDict } from '@/api/constants'
 import { useTheme } from 'vuetify'
+import { useServiceConfigs } from '@/composables/useServiceConfigs'
+import type { ServiceInstanceForm } from '@/api/serviceConfig'
 import { useSilentSettingRefresh } from '@/composables/useSilentSettingRefresh'
 import { openSharedDialog } from '@/composables/useSharedDialog'
 
@@ -76,8 +79,57 @@ function getTemplateAccentStyle(item: (typeof templateTypes.value)[number]) {
 const { global: globalTheme } = useTheme()
 const editorTheme = computed(() => (globalTheme.current.value.dark ? 'github_dark' : 'github_light_default'))
 
-// 所有消息渠道
-const notifications = ref<NotificationConf[]>([])
+// 消息渠道实例配置，增删改各自走服务实例配置端点，写完即刻生效
+const {
+  configs: notificationConfigs,
+  types: notificationChannelTypes,
+  canAddInstance: canAddNotification,
+  load: loadNotifications,
+  addConfig: addNotificationConfig,
+  changeConfig: changeNotificationConfig,
+  removeConfig: removeNotificationConfig,
+} = useServiceConfigs('notification')
+
+/**
+ * 所有消息渠道。
+ *
+ * 场景开关 switchs 是本族由宿主消费的实例级字段，平铺在表单顶层而不是塞进 config——
+ * 塞进去会被声明了契约的渠道类型判为违约、整条配置连带被拒收。拖拽排序只改本页展示
+ * 顺序，逐条写入的端点不记顺序。
+ */
+const notifications = computed<NotificationConf[]>({
+  get: () => notificationConfigs.value as NotificationConf[],
+  set: value => {
+    notificationConfigs.value = value as ServiceInstanceForm[]
+  },
+})
+
+// 内建消息渠道类型，它们登记在内建模块的清单里、不在服务实例登记表中
+const builtinNotificationOptions = computed(() => [
+  { title: t('setting.notification.wechat'), value: 'wechat' },
+  { title: t('setting.notification.wechatClawBot'), value: 'wechatclawbot' },
+  { title: t('setting.notification.feishu'), value: 'feishu' },
+  { title: t('setting.notification.telegram'), value: 'telegram' },
+  { title: t('setting.notification.slack'), value: 'slack' },
+  { title: 'Discord', value: 'discord' },
+  { title: t('setting.notification.synologyChat'), value: 'synologychat' },
+  { title: t('setting.notification.qq'), value: 'qqbot' },
+  { title: t('setting.notification.voceChat'), value: 'vocechat' },
+  { title: t('setting.notification.webPush'), value: 'webpush' },
+])
+
+/**
+ * 可新增配置的消息渠道类型。
+ *
+ * 宿主没有一份跨内建清单与登记表的全量目录，故把两处并起来才是完整的类型菜单；能不能再
+ * 加一份由 canAddInstance 按 multi_instance 判定，而不是按「这个类型有没有配过」一刀切。
+ */
+const notificationTypeOptions = computed(() => {
+  const registeredOptions = notificationChannelTypes.value
+    .filter(item => !builtinNotificationOptions.value.some(builtin => builtin.value === item.type))
+    .map(item => ({ title: item.name, value: item.type }))
+  return [...builtinNotificationOptions.value, ...registeredOptions].filter(item => canAddNotification(item.value))
+})
 
 // 提示框
 const $toast = useToast()
@@ -183,23 +235,28 @@ watch(editorTheme, theme => {
 })
 
 // 添加通知渠道
-function addNotification(notification: string) {
+async function addNotification(notification: string) {
   let name = `${t('setting.notification.channel')}${notifications.value.length + 1}`
   while (notifications.value.some(item => item.name === name)) {
     name = `${t('setting.notification.channel')}${parseInt(name.split(t('setting.notification.channel'))[1]) + 1}`
   }
-  notifications.value.push({
-    name: name,
-    type: notification,
-    enabled: false,
-    config: {},
-  })
+  try {
+    await addNotificationConfig({ name, type: notification, enabled: false, config: {} })
+    $toast.success(t('serviceConfig.saveSuccess'))
+  } catch (error) {
+    console.log(error)
+    $toast.error(t('serviceConfig.createFailed'))
+  }
 }
 
-// 移除通知渠道
-function removeNotification(notification: NotificationConf) {
-  const index = notifications.value.indexOf(notification)
-  if (index > -1) notifications.value.splice(index, 1)
+// 移除通知渠道，同族其余配置不受影响
+async function removeNotification(notification: ServiceInstanceForm) {
+  try {
+    await removeNotificationConfig(notification)
+  } catch (error) {
+    console.log(error)
+    $toast.error(t('serviceConfig.deleteFailed'))
+  }
 }
 
 function trackWechatClawBotRename(oldName: string, newName: string) {
@@ -223,6 +280,12 @@ function trackWechatClawBotRename(oldName: string, newName: string) {
   )
 }
 
+/**
+ * 迁移已改名的微信客服渠道缓存。
+ *
+ * 迁移成功的条目即刻从待迁移表里划掉，失败的留着，下一次改名时连同新条目一起重试——
+ * 缓存跟着渠道名走，漏掉一条就意味着那个渠道的会话上下文永久丢失。
+ */
 async function migrateWechatClawBotRenames() {
   const activeWechatClawBotNames = new Set(
     notifications.value.filter(item => item.type === 'wechatclawbot').map(item => item.name),
@@ -240,17 +303,19 @@ async function migrateWechatClawBotRenames() {
       },
       { feedback: 'silent' },
     )
+    wechatClawBotRenameMap.value = Object.fromEntries(
+      Object.entries(wechatClawBotRenameMap.value).filter(([source]) => source !== oldName),
+    )
   }
 }
 
-// 调用API查询通知渠道设置
-async function loadNotificationSetting() {
+// 读取消息渠道实例配置，失败时保留上一轮内容而不是清空
+async function refreshNotifications() {
   try {
-    const result = await api.get<{ value?: NotificationConf[] }>('system/setting/Notifications')
-    notifications.value = result.value ?? []
-    wechatClawBotRenameMap.value = {}
+    await loadNotifications()
   } catch (error) {
     console.log(error)
+    $toast.error(t('serviceConfig.loadFailed'))
   }
 }
 
@@ -309,19 +374,6 @@ async function loadNotificationTime() {
   }
 }
 
-// 调用API保存通知设置
-async function saveNotificationSetting() {
-  try {
-    await migrateWechatClawBotRenames()
-    await api.post('system/setting/Notifications', notifications.value, { feedback: 'silent' })
-    wechatClawBotRenameMap.value = {}
-    $toast.success(t('setting.notification.saveSuccess'))
-  } catch (error) {
-    console.log(error)
-    $toast.error(t('setting.notification.saveFailed'))
-  }
-}
-
 // 调用API保存通知发送时间设置
 async function saveNotificationTime() {
   try {
@@ -333,15 +385,26 @@ async function saveNotificationTime() {
   }
 }
 
-// 通知渠道设置变化时赋值
-function changNotificationSetting(notification: NotificationConf, name: string) {
-  const index = notifications.value.findIndex(item => item.name === name)
-  if (index !== -1) {
-    const previous = notifications.value[index]
-    notifications.value[index] = notification
-    if (previous?.type === 'wechatclawbot' && previous.name !== notification.name) {
-      trackWechatClawBotRename(previous.name, notification.name)
+/**
+ * 保存通知渠道实例的改动。
+ *
+ * `name` 是这条配置改动前的实例名，用于在库里定位那一行，与表单上的实例名不同即为改名。
+ * 改名在服务端落定之后才发起缓存迁移：迁移按渠道名寻址，冲着一个还没落库的新名字迁只会
+ * 白跑一趟。
+ */
+async function changNotificationSetting(notification: ServiceInstanceForm, name: string) {
+  const previous = notifications.value.find(item => item.name === name)
+  const nextName = notification.name ?? ''
+  try {
+    await changeNotificationConfig(notification, name)
+    if (previous?.type === 'wechatclawbot' && previous.name !== nextName) {
+      trackWechatClawBotRename(previous.name, nextName)
+      await migrateWechatClawBotRenames()
     }
+    $toast.success(t('serviceConfig.saveSuccess'))
+  } catch (error) {
+    console.log(error)
+    $toast.error(t('serviceConfig.updateFailed'))
   }
 }
 
@@ -383,12 +446,7 @@ function getNotificationSwitchText(type: string | undefined) {
 }
 
 async function loadPageData() {
-  await Promise.all([
-    loadNotificationSetting(),
-    loadNotificationSwitchs(),
-    loadNotificationTime(),
-    loadTemplateConfigs(),
-  ])
+  await Promise.all([refreshNotifications(), loadNotificationSwitchs(), loadNotificationTime(), loadTemplateConfigs()])
 }
 
 // 加载数据
@@ -404,6 +462,7 @@ useSilentSettingRefresh(loadPageData, {
 <template>
   <VRow>
     <VCol cols="12">
+      <ServiceProviderIssues />
       <VCard>
         <VCardItem>
           <VCardTitle>{{ t('setting.notification.channels') }}</VCardTitle>
@@ -428,53 +487,25 @@ useSilentSettingRefresh(loadPageData, {
           </Draggable>
         </VCardText>
         <VCardText>
-          <VForm @submit.prevent="() => {}">
-            <div class="d-flex flex-wrap gap-4 mt-4">
-              <VBtn mtype="submit" @click="saveNotificationSetting" prepend-icon="mdi-content-save">
-                {{ t('common.save') }}
-              </VBtn>
-              <VBtn color="success" variant="tonal">
-                <VIcon icon="mdi-plus" />
-                <VMenu :activator="'parent'" :close-on-content-click="true">
-                  <VList>
-                    <VListItem @click="addNotification('wechat')">
-                      <VListItemTitle>{{ t('setting.notification.wechat') }}</VListItemTitle>
-                    </VListItem>
-                    <VListItem @click="addNotification('wechatclawbot')">
-                      <VListItemTitle>{{ t('setting.notification.wechatClawBot') }}</VListItemTitle>
-                    </VListItem>
-                    <VListItem @click="addNotification('feishu')">
-                      <VListItemTitle>{{ t('setting.notification.feishu') }}</VListItemTitle>
-                    </VListItem>
-                    <VListItem @click="addNotification('telegram')">
-                      <VListItemTitle>{{ t('setting.notification.telegram') }}</VListItemTitle>
-                    </VListItem>
-                    <VListItem @click="addNotification('slack')">
-                      <VListItemTitle>{{ t('setting.notification.slack') }}</VListItemTitle>
-                    </VListItem>
-                    <VListItem @click="addNotification('discord')">
-                      <VListItemTitle>Discord</VListItemTitle>
-                    </VListItem>
-                    <VListItem @click="addNotification('synologychat')">
-                      <VListItemTitle>{{ t('setting.notification.synologyChat') }}</VListItemTitle>
-                    </VListItem>
-                    <VListItem @click="addNotification('qqbot')">
-                      <VListItemTitle>{{ t('setting.notification.qq') }}</VListItemTitle>
-                    </VListItem>
-                    <VListItem @click="addNotification('vocechat')">
-                      <VListItemTitle>{{ t('setting.notification.voceChat') }}</VListItemTitle>
-                    </VListItem>
-                    <VListItem @click="addNotification('webpush')">
-                      <VListItemTitle>{{ t('setting.notification.webPush') }}</VListItemTitle>
-                    </VListItem>
-                    <VListItem @click="addNotification('custom')">
-                      <VListItemTitle>{{ t('setting.system.custom') }}</VListItemTitle>
-                    </VListItem>
-                  </VList>
-                </VMenu>
-              </VBtn>
-            </div>
-          </VForm>
+          <div class="d-flex flex-wrap gap-4 mt-4">
+            <VBtn color="success" variant="tonal">
+              <VIcon icon="mdi-plus" />
+              <VMenu :activator="'parent'" :close-on-content-click="true">
+                <VList>
+                  <VListItem
+                    v-for="item in notificationTypeOptions"
+                    :key="item.value"
+                    @click="addNotification(item.value)"
+                  >
+                    <VListItemTitle>{{ item.title }}</VListItemTitle>
+                  </VListItem>
+                  <VListItem @click="addNotification('custom')">
+                    <VListItemTitle>{{ t('setting.system.custom') }}</VListItemTitle>
+                  </VListItem>
+                </VList>
+              </VMenu>
+            </VBtn>
+          </div>
         </VCardText>
       </VCard>
     </VCol>

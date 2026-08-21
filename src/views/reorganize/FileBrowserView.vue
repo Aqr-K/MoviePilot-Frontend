@@ -2,6 +2,7 @@
 import api from '@/api'
 import { FileItem, StorageConf, TransferDirectoryConf } from '@/api/types'
 import FileBrowser from '@/components/filebrowser/FileBrowser.vue'
+import { storageTokenOfConf } from '@/utils/storageToken'
 
 const endpoints = {
   list: {
@@ -32,7 +33,8 @@ const endpoints = {
 
 // 所有存储
 const storages = ref<StorageConf[]>([])
-const storageTypes = computed(() => storages.value.map(s => s.type))
+// 可用存储令牌，目录配置里的 storage 同为令牌，两侧按令牌比对
+const storageTokens = computed(() => storages.value.map(storageTokenOfConf))
 
 // 当前文件项
 const operItem = ref<FileItem | undefined>(undefined)
@@ -84,7 +86,7 @@ interface BrowserInitialParams {
 
 /** 从可用存储和下载目录中选择初始入口，未配置有效目录时回退到存储根路径。 */
 function determineBrowserInitialParams(downloadDirectories: TransferDirectoryConf[]): BrowserInitialParams {
-  const isAvailable = (storage: string) => storageTypes.value.includes(storage)
+  const isAvailable = (storage: string) => storageTokens.value.includes(storage)
   const buckets = downloadDirectories.reduce<Map<string, string[]>>((dict, item) => {
     // filter out directories whose storage is not available
     if (!isAvailable(item.storage)) {
@@ -105,7 +107,7 @@ function determineBrowserInitialParams(downloadDirectories: TransferDirectoryCon
   // if no download directories are configured, fall back to cached storage or first available storage
   if (buckets.size === 0) {
     return {
-      storage: isAvailable(cachedStorage) ? cachedStorage : storageTypes.value[0] || 'local',
+      storage: isAvailable(cachedStorage) ? cachedStorage : storageTokens.value[0] || 'local',
       path: '/',
       name: '/',
     }

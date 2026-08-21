@@ -1,5 +1,6 @@
 import AccountSettingSystem from '@/views/setting/AccountSettingSystem.vue'
 import type { LlmModel, LlmProvider, LlmProviderAuthSession } from '@/composables/useLlmProviderDirectory'
+import type { ServiceInstanceConfigInfo, ServiceInstanceConfigPayload, ServiceTypeInfo } from '@/api/types'
 import { useGlobalSettingsStore } from '@/stores'
 import { fireEvent, screen, waitFor, within } from '@testing-library/vue'
 import userEvent from '@testing-library/user-event'
@@ -8,8 +9,10 @@ import { defineComponent, h, nextTick, ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
+  apiDelete: vi.fn(),
   apiGet: vi.fn(),
   apiPost: vi.fn(),
+  apiPut: vi.fn(),
   openSharedDialog: vi.fn(),
   toastError: vi.fn(),
   toastInfo: vi.fn(),
@@ -29,8 +32,10 @@ vi.mock('colorthief', () => ({
 
 vi.mock('@/api', () => ({
   default: createDataApiMock({
+    delete: mocks.apiDelete,
     get: mocks.apiGet,
     post: mocks.apiPost,
+    put: mocks.apiPut,
   }),
 }))
 
@@ -68,10 +73,19 @@ vi.mock('@/components/cards/DownloaderCard.vue', async () => {
       template: `
         <section :aria-label="'downloader-' + downloader.name">
           <span>{{ downloader.name }} / {{ downloader.type }} / {{ allowRefresh }}</span>
+          <span :aria-label="'default-state-' + downloader.name">{{ downloader.default ? 'default' : 'plain' }}</span>
           <button
             :aria-label="'change-' + downloader.name"
             @click="$emit('change', { ...downloader, name: downloader.name + '-edited', enabled: true }, downloader.name)"
           >change</button>
+          <button
+            :aria-label="'set-default-' + downloader.name"
+            @click="$emit('change', { ...downloader, default: true }, downloader.name)"
+          >set default</button>
+          <button
+            :aria-label="'clear-default-' + downloader.name"
+            @click="$emit('change', { ...downloader, default: false }, downloader.name)"
+          >clear default</button>
           <button :aria-label="'remove-' + downloader.name" @click="$emit('close')">remove</button>
         </section>
       `,
@@ -181,19 +195,113 @@ function createDialogController() {
 
 let systemEnv: Record<string, unknown>
 
+/** 造一条下发形状的实例配置，宿主消费的实例级字段装在 host_config 下。 */
+function createConfigInfo(
+  capability: string,
+  overrides: Partial<ServiceInstanceConfigInfo> = {},
+): ServiceInstanceConfigInfo {
+  return {
+    capability,
+    type: '',
+    name: '',
+    enabled: false,
+    config: {},
+    host_config: {},
+    is_default_target: false,
+    provider: '__builtin__',
+    masked_fields: [],
+    type_available: true,
+    type_name: null,
+    ...overrides,
+  }
+}
+
+/** 造一条类型目录，multi_instance 决定该类型还能不能再加一份配置。 */
+function createTypeInfo(capability: string, overrides: Partial<ServiceTypeInfo> = {}): ServiceTypeInfo {
+  return {
+    capability,
+    type: '',
+    name: '',
+    icon: null,
+    multi_instance: true,
+    config_form_available: false,
+    config_schema: null,
+    provider: 'extension',
+    distribution: 'extension',
+    ...overrides,
+  }
+}
+
 const downloadersFixture = [
-  { name: '下载器1', type: 'qbittorrent', default: false, enabled: true, config: { host: 'qb.example' } },
-  { name: '下载器3', type: 'transmission', default: false, enabled: false, config: { host: 'tr.example' } },
+  createConfigInfo('downloader', {
+    type: 'qbittorrent',
+    name: '下载器1',
+    enabled: true,
+    config: { host: 'qb.example' },
+    host_config: { path_mapping: [['/media', '/downloads']] },
+  }),
+  createConfigInfo('downloader', {
+    type: 'transmission',
+    name: '下载器3',
+    enabled: false,
+    config: { host: 'tr.example' },
+  }),
 ]
 
 const mediaServersFixture = [
-  { name: '服务器1', type: 'emby', enabled: true, config: { host: 'emby.example' } },
-  { name: '服务器3', type: 'plex', enabled: false, config: { host: 'plex.example' } },
+  createConfigInfo('mediaserver', {
+    type: 'emby',
+    name: '服务器1',
+    enabled: true,
+    config: { host: 'emby.example' },
+    host_config: { sync_libraries: ['all'] },
+  }),
+  createConfigInfo('mediaserver', { type: 'plex', name: '服务器3', enabled: false, config: { host: 'plex.example' } }),
 ]
 
-let downloadersSetting: Array<Record<string, unknown>>
-let mediaServersSetting: Array<Record<string, unknown>>
+// Transmission 声明只能配一份，夹具里已经配了下载器3，故它不该再出现在新增菜单里
+const downloaderTypesFixture = [
+  createTypeInfo('downloader', { type: 'aria2', name: 'Aria2' }),
+  createTypeInfo('downloader', { type: 'transmission', name: 'Transmission', multi_instance: false }),
+]
+
+const mediaServerTypesFixture = [createTypeInfo('mediaserver', { type: 'kodi', name: 'Kodi' })]
+
+// 服务端那两族的实例配置，逐条写入的端点直接改它，下一次读取即刻反映出来
+let serviceConfigs: Record<string, ServiceInstanceConfigInfo[]> = {}
 let scrapingSetting: Record<string, boolean | string>
+
+function readServiceConfigs(capability: string) {
+  return serviceConfigs[capability] ?? []
+}
+
+function writeServiceConfigs(capability: string, next: ServiceInstanceConfigInfo[]) {
+  serviceConfigs = { ...serviceConfigs, [capability]: next }
+}
+
+/**
+ * 把写入载荷折回下发形状：宿主消费的实例级字段归 host_config，其余键留在 config。
+ *
+ * 载荷里的数组与对象直接引用着页面上的响应式代理，照收会让后续 structuredClone 抛错；
+ * 先过一遍 JSON 摘成纯数据，与真实端点收到序列化载荷的口径一致。
+ */
+function toConfigInfo(capability: string, payload: ServiceInstanceConfigPayload, previous?: ServiceInstanceConfigInfo) {
+  const { config, enabled, name, type, ...hostConfig } = JSON.parse(JSON.stringify(payload)) as typeof payload
+  return createConfigInfo(capability, {
+    type: type ?? previous?.type ?? '',
+    name: name ?? '',
+    enabled: !!enabled,
+    config: config ?? {},
+    host_config: hostConfig,
+    is_default_target: previous?.is_default_target ?? false,
+  })
+}
+
+/** 拆开服务实例配置端点的路径：`service/<section>/<capability>[/<type>]`。 */
+function parseServiceEndpoint(endpoint: string) {
+  const [, section = '', capability = '', serviceType = ''] = endpoint.split('/')
+  return { section, capability, serviceType }
+}
 
 const BASIC_SETTING_KEYS = [
   'AI_AGENT_ENABLE',
@@ -239,17 +347,70 @@ const BASIC_SETTING_KEYS = [
   'WALLPAPER',
 ]
 
+function defaultGet(endpoint: string) {
+  if (endpoint === 'system/env') return { success: true, data: systemEnv }
+  if (endpoint === 'message/agent/mcp/servers') return { success: true, data: { servers: [] } }
+  if (endpoint === 'service/types/downloader') return { success: true, data: structuredClone(downloaderTypesFixture) }
+  if (endpoint === 'service/types/mediaserver') return { success: true, data: structuredClone(mediaServerTypesFixture) }
+  if (endpoint === 'service/configs/downloader')
+    return { success: true, data: structuredClone(readServiceConfigs('downloader')) }
+  if (endpoint === 'service/configs/mediaserver')
+    return { success: true, data: structuredClone(readServiceConfigs('mediaserver')) }
+  if (endpoint === 'service/absent_providers') return { success: true, data: [] }
+  if (endpoint === 'system/setting/ScrapingSwitchs')
+    return { success: true, data: { value: structuredClone(scrapingSetting) } }
+  throw new Error(`Unexpected GET ${endpoint}`)
+}
+
 function mockLoadedSettings() {
-  mocks.apiGet.mockImplementation((endpoint: string) => {
-    if (endpoint === 'system/env') return { success: true, data: systemEnv }
-    if (endpoint === 'message/agent/mcp/servers') return { success: true, data: { servers: [] } }
-    if (endpoint === 'system/setting/Downloaders')
-      return { success: true, data: { value: structuredClone(downloadersSetting) } }
-    if (endpoint === 'system/setting/MediaServers')
-      return { success: true, data: { value: structuredClone(mediaServersSetting) } }
-    if (endpoint === 'system/setting/ScrapingSwitchs')
-      return { success: true, data: { value: structuredClone(scrapingSetting) } }
-    throw new Error(`Unexpected GET ${endpoint}`)
+  mocks.apiGet.mockImplementation(defaultGet)
+  mocks.apiPost.mockImplementation((endpoint: string, payload: ServiceInstanceConfigPayload) => {
+    const { section, capability } = parseServiceEndpoint(endpoint)
+    if (section === 'configs')
+      writeServiceConfigs(capability, [...readServiceConfigs(capability), toConfigInfo(capability, payload)])
+    return { success: true }
+  })
+  mocks.apiPut.mockImplementation(
+    (endpoint: string, payload: ServiceInstanceConfigPayload, config?: { params?: { name?: string } }) => {
+      const { section, capability, serviceType } = parseServiceEndpoint(endpoint)
+      const name = config?.params?.name ?? ''
+      if (section === 'configs') {
+        writeServiceConfigs(
+          capability,
+          readServiceConfigs(capability).map(item =>
+            item.type === serviceType && item.name === name ? toConfigInfo(capability, payload, item) : item,
+          ),
+        )
+      }
+      // 默认调用目标每族至多一个，置位落到哪一条由这一次的类型加实例名决定
+      if (section === 'default_target') {
+        writeServiceConfigs(
+          capability,
+          readServiceConfigs(capability).map(item => ({
+            ...item,
+            is_default_target: item.type === serviceType && item.name === name,
+          })),
+        )
+      }
+      return { success: true }
+    },
+  )
+  mocks.apiDelete.mockImplementation((endpoint: string, config?: { params?: { name?: string } }) => {
+    const { section, capability, serviceType } = parseServiceEndpoint(endpoint)
+    const name = config?.params?.name ?? ''
+    if (section === 'configs') {
+      writeServiceConfigs(
+        capability,
+        readServiceConfigs(capability).filter(item => !(item.type === serviceType && item.name === name)),
+      )
+    }
+    if (section === 'default_target') {
+      writeServiceConfigs(
+        capability,
+        readServiceConfigs(capability).map(item => ({ ...item, is_default_target: false })),
+      )
+    }
+    return { success: true }
   })
 }
 
@@ -356,8 +517,10 @@ async function expandLlmSettings() {
 describe('AccountSettingSystem', () => {
   beforeEach(() => {
     vi.spyOn(console, 'log').mockImplementation(() => {})
+    mocks.apiDelete.mockReset()
     mocks.apiGet.mockReset()
     mocks.apiPost.mockReset()
+    mocks.apiPut.mockReset()
     mocks.openSharedDialog.mockReset()
     mocks.toastError.mockReset()
     mocks.toastInfo.mockReset()
@@ -371,12 +534,13 @@ describe('AccountSettingSystem', () => {
       DB_TYPE: 'sqlite',
       RUST_ACCEL_AVAILABLE: false,
     }
-    downloadersSetting = structuredClone(downloadersFixture)
-    mediaServersSetting = structuredClone(mediaServersFixture)
+    serviceConfigs = {
+      downloader: structuredClone(downloadersFixture),
+      mediaserver: structuredClone(mediaServersFixture),
+    }
     scrapingSetting = {}
     mocks.useLlmProviderDirectory.mockReturnValue(createLlmDirectoryState())
     mocks.openSharedDialog.mockImplementation(() => createDialogController())
-    mocks.apiPost.mockResolvedValue({ success: true })
     mockLoadedSettings()
   })
 
@@ -797,7 +961,7 @@ describe('AccountSettingSystem', () => {
     )
   })
 
-  it('owns downloader creation, card changes, removal, ordering, default correction, and reload', async () => {
+  it('owns downloader creation, per-record renames, and removal through the service config endpoints', async () => {
     const user = userEvent.setup()
     await renderSettings()
     expect(await screen.findByText('下载器1 / qbittorrent / true')).toBeInTheDocument()
@@ -805,26 +969,95 @@ describe('AccountSettingSystem', () => {
 
     await user.click(card.getAllByRole('button').at(-1)!)
     await user.click(await screen.findByText('Qbittorrent', { selector: '.v-list-item-title' }))
-    expect(screen.getByText('下载器4 / qbittorrent / true')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('下载器4 / qbittorrent / true')).toBeInTheDocument())
+    expect(findPost('service/configs/downloader')?.[1]).toEqual({
+      type: 'qbittorrent',
+      name: '下载器4',
+      enabled: false,
+      config: {},
+    })
 
-    await user.click(screen.getByRole('button', { name: 'reverse-下载器1' }))
     await user.click(screen.getByRole('button', { name: 'change-下载器3' }))
-    await user.click(screen.getByRole('button', { name: 'remove-下载器1' }))
-    expect(screen.getByText('下载器3-edited / transmission / true')).toBeInTheDocument()
-    expect(screen.queryByLabelText('downloader-下载器1')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('下载器3-edited / transmission / true')).toBeInTheDocument())
+    expect(mocks.apiPut).toHaveBeenCalledWith(
+      'service/configs/downloader/transmission',
+      { type: 'transmission', name: '下载器3-edited', enabled: true, config: { host: 'tr.example' } },
+      { params: { name: '下载器3' } },
+    )
+    // 默认调用目标受「每族至多一个」的唯一索引管辖，绝不能顺着配置载荷一起写
+    expect(mocks.apiPut.mock.calls[0]?.[1]).not.toHaveProperty('default')
 
-    await user.click(card.getByRole('button', { name: '保存' }))
-    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith('下载器设置保存成功'))
-    expect(findPost('system/setting/Downloaders')?.[1]).toEqual([
-      expect.objectContaining({ default: false, enabled: false, name: '下载器4', type: 'qbittorrent' }),
-      expect.objectContaining({ default: true, enabled: true, name: '下载器3-edited', type: 'transmission' }),
-    ])
-    expect(mocks.toastInfo).toHaveBeenCalledWith('未设置默认下载器，已将【下载器3-edited】作为默认下载器')
-    await waitFor(() => expect(screen.getByText('下载器1 / qbittorrent / true')).toBeInTheDocument())
-    expect(screen.queryByText('下载器3-edited / transmission / true')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'remove-下载器1' }))
+    await waitFor(() => expect(screen.queryByLabelText('downloader-下载器1')).not.toBeInTheDocument())
+    expect(mocks.apiDelete).toHaveBeenCalledWith('service/configs/downloader/qbittorrent', {
+      params: { name: '下载器1' },
+    })
   })
 
-  it('owns media server creation, card changes, removal, ordering, legacy interval, and reload', async () => {
+  it('keeps the host-level downloader path mapping out of the type config payload', async () => {
+    const user = userEvent.setup()
+    await renderSettings()
+    await screen.findByText('下载器1 / qbittorrent / true')
+
+    await user.click(screen.getByRole('button', { name: 'change-下载器1' }))
+
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith('配置已保存'))
+    expect(mocks.apiPut).toHaveBeenCalledWith(
+      'service/configs/downloader/qbittorrent',
+      {
+        type: 'qbittorrent',
+        name: '下载器1-edited',
+        enabled: true,
+        config: { host: 'qb.example' },
+        path_mapping: [['/media', '/downloads']],
+      },
+      { params: { name: '下载器1' } },
+    )
+  })
+
+  it('routes the downloader default target to its own endpoint only when the switch actually moves', async () => {
+    const user = userEvent.setup()
+    await renderSettings()
+    await screen.findByText('下载器1 / qbittorrent / true')
+
+    // 没动开关时不该碰置位端点，否则一次改端口号会顺带把别人的默认清掉
+    await user.click(screen.getByRole('button', { name: 'clear-default-下载器1' }))
+    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith('配置已保存'))
+    expect(mocks.apiPut.mock.calls.filter(call => String(call[0]).startsWith('service/default_target/'))).toHaveLength(
+      0,
+    )
+    expect(mocks.apiDelete).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'set-default-下载器1' }))
+    await waitFor(() =>
+      expect(mocks.apiPut).toHaveBeenCalledWith('service/default_target/downloader/qbittorrent', undefined, {
+        params: { name: '下载器1' },
+      }),
+    )
+    await waitFor(() => expect(screen.getByLabelText('default-state-下载器1')).toHaveTextContent('default'))
+
+    await user.click(screen.getByRole('button', { name: 'clear-default-下载器1' }))
+    await waitFor(() => expect(mocks.apiDelete).toHaveBeenCalledWith('service/default_target/downloader'))
+    await waitFor(() => expect(screen.getByLabelText('default-state-下载器1')).toHaveTextContent('plain'))
+  })
+
+  it('reorders downloader cards locally without writing, because per-record writes carry no order', async () => {
+    const user = userEvent.setup()
+    await renderSettings()
+    await screen.findByText('下载器1 / qbittorrent / true')
+
+    await user.click(screen.getByRole('button', { name: 'reverse-下载器1' }))
+
+    expect(screen.getAllByText(/ \/ (qbittorrent|transmission) \//).map(node => node.textContent)).toEqual([
+      '下载器3 / transmission / true',
+      '下载器1 / qbittorrent / true',
+    ])
+    expect(mocks.apiPut).not.toHaveBeenCalled()
+    expect(mocks.apiDelete).not.toHaveBeenCalled()
+    expect(findPost('service/configs/downloader')).toBeUndefined()
+  })
+
+  it('owns media server creation, per-record renames, removal, and the legacy interval hint', async () => {
     const user = userEvent.setup()
     systemEnv.MEDIASERVER_SYNC_INTERVAL = 12
     await renderSettings()
@@ -833,21 +1066,39 @@ describe('AccountSettingSystem', () => {
 
     await user.click(card.getAllByRole('button').at(-1)!)
     await user.click(await screen.findByText('Emby', { selector: '.v-list-item-title' }))
-    expect(screen.getByText('服务器4 / emby / 12')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('服务器4 / emby / 12')).toBeInTheDocument())
+    expect(findPost('service/configs/mediaserver')?.[1]).toEqual({
+      type: 'emby',
+      name: '服务器4',
+      enabled: false,
+      config: {},
+    })
 
-    await user.click(screen.getByRole('button', { name: 'reverse-服务器1' }))
     await user.click(screen.getByRole('button', { name: 'change-服务器3' }))
-    await user.click(screen.getByRole('button', { name: 'remove-服务器1' }))
-    expect(screen.getByText('服务器3-edited / plex / 12')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('服务器3-edited / plex / 12')).toBeInTheDocument())
+    expect(mocks.apiPut).toHaveBeenCalledWith(
+      'service/configs/mediaserver/plex',
+      { type: 'plex', name: '服务器3-edited', enabled: true, config: { host: 'plex.example' } },
+      { params: { name: '服务器3' } },
+    )
 
-    await user.click(card.getByRole('button', { name: '保存' }))
-    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledWith('媒体服务器设置保存成功'))
-    expect(findPost('system/setting/MediaServers')?.[1]).toEqual([
-      expect.objectContaining({ enabled: false, name: '服务器4', type: 'emby' }),
-      expect.objectContaining({ enabled: true, name: '服务器3-edited', type: 'plex' }),
-    ])
-    await waitFor(() => expect(screen.getByText('服务器1 / emby / 12')).toBeInTheDocument())
-    expect(screen.queryByText('服务器3-edited / plex / 12')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'remove-服务器1' }))
+    await waitFor(() => expect(screen.queryByLabelText('mediaserver-服务器1')).not.toBeInTheDocument())
+    expect(mocks.apiDelete).toHaveBeenCalledWith('service/configs/mediaserver/emby', { params: { name: '服务器1' } })
+  })
+
+  it('merges registered service types into both add menus and hides single-instance types already configured', async () => {
+    const user = userEvent.setup()
+    await renderSettings()
+    await screen.findByText('下载器1 / qbittorrent / true')
+
+    await user.click(getSettingsCard('下载器').getAllByRole('button').at(-1)!)
+    expect(await screen.findByText('Aria2', { selector: '.v-list-item-title' })).toBeInTheDocument()
+    expect(screen.queryByText('Transmission', { selector: '.v-list-item-title' })).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+
+    await user.click(getSettingsCard('媒体服务器').getAllByRole('button').at(-1)!)
+    expect(await screen.findByText('Kodi', { selector: '.v-list-item-title' })).toBeInTheDocument()
   })
 
   it('round-trips representative advanced tabs and normalizes scraping and empty log values', async () => {
@@ -1270,24 +1521,47 @@ describe('AccountSettingSystem', () => {
   })
 
   it.each([
-    ['下载器', 'system/setting/Downloaders', '下载器设置保存失败！'],
-    ['媒体服务器', 'system/setting/MediaServers', '媒体服务器设置保存失败！'],
-  ])('reports an HTTP failure while saving %s settings', async (cardTitle, endpoint, message) => {
-    let attempts = 0
-    mocks.apiPost.mockImplementation((path: string) => {
-      if (path === endpoint && attempts++ === 0) return Promise.reject(new Error('offline'))
-      return Promise.resolve({ success: true })
-    })
+    ['下载器', 'downloader', 'change-下载器1', 'remove-下载器1'],
+    ['媒体服务器', 'mediaserver', 'change-服务器1', 'remove-服务器1'],
+  ])(
+    'reports per-record %s write failures without dropping the list',
+    async (cardTitle, capability, changeLabel, removeLabel) => {
+      const user = userEvent.setup()
+      await renderSettings()
+      await screen.findByRole('button', { name: changeLabel })
+
+      mocks.apiPut.mockRejectedValueOnce(new Error('offline'))
+      await user.click(screen.getByRole('button', { name: changeLabel }))
+      await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith('更新配置失败！'))
+      expect(screen.getByRole('button', { name: changeLabel })).toBeInTheDocument()
+
+      mocks.apiDelete.mockRejectedValueOnce(new Error('offline'))
+      await user.click(screen.getByRole('button', { name: removeLabel }))
+      await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith('删除配置失败！'))
+      expect(screen.getByRole('button', { name: removeLabel })).toBeInTheDocument()
+
+      mocks.apiPost.mockRejectedValueOnce(new Error('offline'))
+      await user.click(getSettingsCard(cardTitle).getAllByRole('button').at(-1)!)
+      await user.click(await screen.findByText('自定义', { selector: '.v-list-item-title' }))
+      await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith('新增配置失败！'))
+      expect(findPost(`service/configs/${capability}`)).toBeDefined()
+      expect(mocks.toastSuccess).not.toHaveBeenCalled()
+    },
+  )
+
+  it('reports a downloader load failure and keeps the previous list on screen', async () => {
     await renderSettings()
+    await screen.findByText('下载器1 / qbittorrent / true')
+    const refresh = mocks.useSilentSettingRefresh.mock.calls[0]?.[0] as () => Promise<void>
 
-    await fireEvent.click(getSettingsCard(cardTitle).getByRole('button', { name: '保存' }))
+    mocks.apiGet.mockImplementation((endpoint: string) => {
+      if (endpoint === 'service/configs/downloader') throw new Error('offline')
+      return defaultGet(endpoint)
+    })
+    await refresh()
 
-    await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith(message))
-    expect(mocks.toastSuccess).not.toHaveBeenCalled()
-
-    await fireEvent.click(getSettingsCard(cardTitle).getByRole('button', { name: '保存' }))
-    await waitFor(() => expect(mocks.toastSuccess).toHaveBeenCalledOnce())
-    expect(mocks.apiPost.mock.calls.filter(call => call[0] === endpoint)).toHaveLength(2)
+    await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith('读取配置失败！'))
+    expect(screen.getByText('下载器1 / qbittorrent / true')).toBeInTheDocument()
   })
 
   it('reports an advanced environment save failure while keeping the dialog open', async () => {

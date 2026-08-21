@@ -10,10 +10,15 @@ const display = useDisplay()
 const { t } = useI18n()
 
 // 定义输入
-defineProps({
+const props = defineProps({
   conf: {
     type: Object as PropType<{ [key: string]: any }>,
     required: true,
+  },
+  // 存储令牌，同一类型配了多份实例时用它指到具体那一份
+  storage: {
+    type: String,
+    default: 'alipan',
   },
 })
 
@@ -42,7 +47,7 @@ async function handleDone() {
 async function getQrcode() {
   try {
     const result = await manageStorage<{ codeUrl: string }>(
-      'alipan',
+      props.storage,
       'generate_qrcode',
       {},
       { feedback: 'silent' },
@@ -59,7 +64,7 @@ async function getQrcode() {
 async function checkQrcode() {
   try {
     const result = await manageStorage<{ status: string; tip: string }>(
-      'alipan',
+      props.storage,
       'check_login',
       {},
       { feedback: 'silent' },
@@ -89,7 +94,7 @@ async function checkQrcode() {
 // 重置配置
 async function handleReset() {
   try {
-    await manageStorage('alipan', 'reset_config', {}, { feedback: 'silent' })
+    await manageStorage(props.storage, 'reset_config', {}, { feedback: 'silent' })
     // 重置成功
     alertType.value = 'success'
     handleDone()

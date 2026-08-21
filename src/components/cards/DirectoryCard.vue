@@ -4,6 +4,7 @@ import { manageStorage } from '@/api/manage'
 import { nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { storageRemoteDict } from '@/api/constants'
+import { storageTokenOfConf, storageTypeOf } from '@/utils/storageToken'
 
 const DEFAULT_DIRECTORY_ACCENT_RGB = '141, 81, 249'
 const STORAGE_ACCENT_COLOR_MAP = {
@@ -51,21 +52,21 @@ const typeItems = computed(() => [
   { title: t('mediaType.music'), value: '音乐' },
 ])
 
-// 计算资源存储字典（整理方式为下载器时不能为远程存储）
+// 计算资源存储字典（整理方式为下载器时不能为远程存储），取值为存储令牌；是否远程按存储类型判定
 const resourceStorageOptions = computed(() => {
   return props.storages
     .filter(item => !storageRemoteDict[item.type] || props.directory.monitor_type !== 'downloader')
     .map(item => ({
       title: item.name,
-      value: item.type,
+      value: storageTokenOfConf(item),
     }))
 })
 
-// 存储字典
+// 存储字典，取值为存储令牌，同类型的多份实例才带实例名后缀
 const libraryStorageOptions = computed(() => {
   return props.storages.map(item => ({
     title: item.name,
-    value: item.type,
+    value: storageTokenOfConf(item),
   }))
 })
 
@@ -100,8 +101,10 @@ function getCustomStoragePaletteColor(storageType?: string) {
   return customStorageColors[customStorageIndex % customStorageColors.length]
 }
 
-/** 获取指定存储类型在目录卡片中使用的强调色。 */
-function getStorageAccentColor(storageType?: string) {
+/** 获取指定存储令牌在目录卡片中使用的强调色。 */
+function getStorageAccentColor(storage?: string) {
+  // 强调色按存储类型取，同类型的多份实例共用一个颜色，故先剥掉令牌里的实例名
+  const storageType = storageTypeOf(storage)
   if (hasKnownStorageType(storageType)) return STORAGE_ACCENT_COLOR_MAP[storageType]
 
   // 自定义存储没有固定品牌图标，使用离散调色板，保证连续 custom1/custom2 也能明显区分。

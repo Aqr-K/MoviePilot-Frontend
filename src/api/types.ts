@@ -1712,12 +1712,30 @@ export interface NotificationSwitchConf {
 
 // 存储配置
 export interface StorageConf {
-  // 名称
+  // 实例名，同一存储类型下唯一，与类型拼成存储令牌 u115@work
   name: string
   // 类型 local/alipan/u115/rclone
   type: string
   // 配置
   config?: { [key: string]: any }
+  // 是否为本族的默认调用目标，即调用未指定存储时选中的那一份
+  default?: boolean
+  // 是否承接本存储类型的裸令牌，兼容存量路径用，与 default 是两个独立开关
+  bare_token_target?: boolean
+}
+
+// 登录认证入口配置
+export interface AuthProviderConf {
+  // 实例名，同一类型下唯一，即登录页上该入口的名称
+  name: string
+  // 类型，即扩展声明的登录入口类型标识
+  type: string
+  // 配置
+  config: Record<string, unknown>
+  // 是否启用
+  enabled: boolean
+  // 身份绑定标识，留空时由宿主按 类型@实例名 派生
+  identity_provider?: string | null
 }
 
 // 媒体服务器配置
@@ -1734,6 +1752,98 @@ export interface MediaServerConf {
   sync_libraries?: string[]
   // 自动同步间隔（小时），为空时使用旧全局配置
   sync_interval?: number | null
+}
+
+// 一族服务在登记表中的元数据
+export interface ServiceFamilyInfo {
+  // 能力标签，服务实例配置按它归族
+  capability: string
+  // 族的展示名称
+  name: string
+  // 登记方的发行方式
+  distribution: string
+  // 登记方的扩展实例键，宿主内建族为 null
+  owner?: string | null
+}
+
+// 某族下一个可供新增配置的服务实例类型
+export interface ServiceTypeInfo {
+  // 该类型所属服务族的能力标签
+  capability: string
+  // 类型标识，即该族配置模型的 type 取值
+  type: string
+  // 类型展示名称
+  name: string
+  // 类型展示图标，未声明时为 null
+  icon?: string | null
+  // 用户能否为该类型配置多份，为 false 时不给出新增第二份的入口
+  multi_instance: boolean
+  // 该类型有没有随声明登记的专属配置界面
+  config_form_available: boolean
+  // 该类型配置内容的契约，未声明契约时为 null
+  config_schema?: Record<string, unknown> | null
+  // 提供该类型的扩展实例键
+  provider: string
+  // 提供方的发行方式
+  distribution: string
+}
+
+// 一条服务实例配置的下发形状
+export interface ServiceInstanceConfigInfo {
+  // 该配置所属服务族的能力标签
+  capability: string
+  // 类型标识
+  type: string
+  // 实例名
+  name: string
+  // 该实例是否启用
+  enabled: boolean
+  // 类型专属配置载荷，凭据已掩码
+  config: Record<string, unknown>
+  // 宿主消费的实例级字段载荷
+  host_config: Record<string, unknown>
+  // 该实例是否为本族的默认调用目标
+  is_default_target: boolean
+  // 提供该类型的扩展实例键，内建类型为保留值
+  provider: string
+  // 已被掩码的字段路径，形如 config.auth.token
+  masked_fields: string[]
+  // 该类型当前是否已登记，为 false 时这条配置产不出实例
+  type_available: boolean
+  // 类型展示名称，类型未登记时为 null
+  type_name?: string | null
+}
+
+// 服务实例配置的写入载荷，新增与更新共用
+// 宿主消费的实例级字段平铺在顶层，故允许已声明字段之外的顶层键；
+// default 刻意不在其中，默认调用目标走专用端点
+export interface ServiceInstanceConfigPayload {
+  // 类型标识；更新时取路径上的类型，本字段被忽略
+  type?: string
+  // 实例名；更新时给出不同取值即为改名
+  name?: string
+  // 该实例是否启用
+  enabled?: boolean
+  // 类型专属配置载荷，凭据字段回传掩码表示未改动
+  config?: Record<string, unknown>
+  // 宿主消费的实例级字段，平铺在顶层
+  [hostField: string]: unknown
+}
+
+// 一条提供方已消失的服务实例配置
+export interface ServiceConfigProviderIssue {
+  // 该配置所属服务族的能力标签
+  capability: string
+  // 类型标识
+  type: string
+  // 实例名
+  name: string
+  // 记账中提供该类型的扩展实例键
+  provider: string
+  // 提供方所属的扩展标识
+  extension_id: string
+  // 成因代码 not_installed/disabled/start_failed，文案由前端本地化
+  reason: string
 }
 
 // 文件整理目录配置

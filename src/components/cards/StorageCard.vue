@@ -15,6 +15,7 @@ import { isNullOrEmptyObject } from '@/@core/utils'
 import { useI18n } from 'vue-i18n'
 import { openSharedDialog } from '@/composables/useSharedDialog'
 import { useCardAccentColor } from '@/composables/useCardAccentColor'
+import { storageTokenOfConf } from '@/utils/storageToken'
 
 const AliyunAuthDialog = defineAsyncComponent(() => import('../dialog/AliyunAuthDialog.vue'))
 const U115AuthDialog = defineAsyncComponent(() => import('../dialog/U115AuthDialog.vue'))
@@ -22,6 +23,9 @@ const RcloneConfigDialog = defineAsyncComponent(() => import('../dialog/RcloneCo
 const AlistConfigDialog = defineAsyncComponent(() => import('../dialog/AlistConfigDialog.vue'))
 const SmbConfigDialog = defineAsyncComponent(() => import('../dialog/SmbConfigDialog.vue'))
 const StorageCustomConfigDialog = defineAsyncComponent(() => import('../dialog/StorageCustomConfigDialog.vue'))
+
+// 配置保存走实例配置端点的弹窗，它们要按实例身份写回，而不是按令牌整份替换
+const CONFIG_DIALOGS: Component[] = [RcloneConfigDialog, AlistConfigDialog, SmbConfigDialog]
 
 // 国际化
 const { t } = useI18n()
@@ -36,7 +40,10 @@ const props = defineProps({
 })
 
 // 定义事件
-const emit = defineEmits(['done', 'close'])
+const emit = defineEmits(['done', 'close', 'edit'])
+
+// 本实例的存储令牌，管理动作按令牌指到具体实例而不是整个存储类型
+const storageToken = computed(() => storageTokenOfConf(props.storage))
 
 // 提示信息
 const $toast = useToast()
@@ -69,12 +76,15 @@ function openStorageDialog() {
   }
 
   const dialog = dialogMap[props.storage.type] || StorageCustomConfigDialog
+  // 配置类弹窗把配置写回实例配置端点，故另外交出整条实例配置；授权类弹窗不需要
+  const instanceProps = CONFIG_DIALOGS.includes(dialog) ? { storageConf: props.storage } : {}
+  // 凭据配置按令牌指到具体实例：同一类型配了两份时，令牌是唯一能区分它们的东西
   const dialogProps =
     dialog === StorageCustomConfigDialog
       ? { storage: props.storage }
       : dialog === AlistConfigDialog
-        ? { conf: props.storage.config || {}, type: props.storage.type }
-        : { conf: props.storage.config || {} }
+        ? { conf: props.storage.config || {}, type: props.storage.type, storage: storageToken.value, ...instanceProps }
+        : { conf: props.storage.config || {}, storage: storageToken.value, ...instanceProps }
 
   openSharedDialog(
     dialog,
@@ -127,7 +137,7 @@ const usage = computed(() => {
 /** 查询存储空间使用信息。 */
 async function queryStorage() {
   try {
-    const data = await manageStorage<{ total: number; available: number }>(props.storage.type, 'usage')
+    const data = await manageStorage<{ total: number; available: number }>(storageToken.value, 'usage')
     total.value = data.total
     available.value = data.available
   } catch (error) {
@@ -148,6 +158,11 @@ onMounted(() => {
 function onClose() {
   emit('close')
 }
+
+/** 打开实例外壳设置（实例名、裸令牌承接、默认存储）。 */
+function onEdit() {
+  emit('edit', props.storage)
+}
 </script>
 
 <template>
@@ -158,9 +173,18 @@ function onClose() {
     @click="openStorageDialog"
   >
     <VDialogCloseBtn @click="onClose" />
+    <span class="app-card-top-action absolute top-3 right-12">
+      <IconBtn :aria-label="`edit-${storage.name}`" @click.stop="onEdit">
+        <VIcon icon="mdi-database-cog" />
+      </IconBtn>
+    </span>
     <VCardText class="flex justify-space-between align-center gap-3">
       <div class="align-self-start flex-1">
-        <h5 class="text-h6 mb-1">{{ storage.name }}</h5>
+        <h5 class="text-h6 mb-1">
+          <VBadge v-if="storage.default" dot inline color="success" class="me-1" />
+          {{ storage.name }}
+        </h5>
+        <div class="mb-1 text-xs text-medium-emphasis">{{ storageToken }}</div>
         <div class="mb-3 text-sm" v-if="total">{{ formatBytes(used, 1) }} / {{ formatBytes(total, 1) }}</div>
         <div v-else-if="isNullOrEmptyObject(storage.config)">{{ t('storage.notConfigured') }}</div>
       </div>

@@ -251,7 +251,9 @@ describe('AddSubtitleDownloadDialog directories', () => {
     expect(await screen.findByRole('option', { name: '/subtitles/local' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: '/subtitles/legacy' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: '/subtitles/null-storage' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: ':/subtitles/empty-storage' })).toBeInTheDocument()
+    // 空存储表示「没有存储前缀」，而不是一个名为空串的存储；旧写法拼出的 :{path} 是个畸形 URI
+    expect(screen.getByRole('option', { name: '/subtitles/empty-storage' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: ':/subtitles/empty-storage' })).not.toBeInTheDocument()
     expect(screen.getAllByRole('option', { name: 's3:/subtitles/remote' })).toHaveLength(1)
     expect(screen.queryByText('undefined:/subtitles/legacy')).not.toBeInTheDocument()
     expect(screen.queryByText('null:/subtitles/null-storage')).not.toBeInTheDocument()

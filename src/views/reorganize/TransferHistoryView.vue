@@ -20,6 +20,7 @@ import { openSharedDialog } from '@/composables/useSharedDialog'
 import { buildUserPermissionContext, hasPermission } from '@/utils/permission'
 import { getDisplayImageUrl } from '@/utils/imageUtils'
 import { formatMusicAudioSpecs } from '@/utils/music'
+import { storageTokenOfConf, storageTypeOf } from '@/utils/storageToken'
 
 const TransferHistoryDeleteDialog = defineAsyncComponent(
   () => import('@/components/dialog/TransferHistoryDeleteDialog.vue'),
@@ -349,11 +350,22 @@ function openRedoDialog() {
   )
 }
 
-// 存储字典
+// 存储字典，按存储令牌建键，同类型的多份实例各占一条
 const storageDict = computed(() => {
   return storages.value.reduce(
     (dict, item) => {
-      dict[item.type] = item.name
+      dict[storageTokenOfConf(item)] = item.name
+      return dict
+    },
+    {} as Record<string, string>,
+  )
+})
+
+// 存储类型字典，历史记录里的存量值只有类型没有实例名时按此回退，同类型取先出现的一份
+const storageTypeDict = computed(() => {
+  return storages.value.reduce(
+    (dict, item) => {
+      if (!(item.type in dict)) dict[item.type] = item.name
       return dict
     },
     {} as Record<string, string>,
@@ -1104,7 +1116,9 @@ function getHistoryStorageName(storage?: string) {
     smb: 'SMB',
   }
 
-  return storageDict.value[storage] || fallbackNames[storage] || storage
+  // 先按完整令牌精确命中，未命中再按存储类型回退，存量的裸令牌同样能取到名称
+  const storageType = storageTypeOf(storage)
+  return storageDict.value[storage] || storageTypeDict.value[storageType] || fallbackNames[storageType] || storage
 }
 
 // 获取移动端卡片状态对应的主题色。

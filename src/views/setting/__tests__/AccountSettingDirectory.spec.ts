@@ -8,6 +8,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   apiGet: vi.fn(),
   apiPost: vi.fn(),
+  apiPut: vi.fn(),
+  apiDelete: vi.fn(),
   openSharedDialog: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
@@ -15,7 +17,12 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/api', () => ({
-  default: createDataApiMock({ get: mocks.apiGet, post: mocks.apiPost }),
+  default: createDataApiMock({
+    get: mocks.apiGet,
+    post: mocks.apiPost,
+    put: mocks.apiPut,
+    delete: mocks.apiDelete,
+  }),
 }))
 
 vi.mock('vue-toastification', () => ({
@@ -58,12 +65,13 @@ vi.mock('@/components/cards/StorageCard.vue', async () => {
     default: defineComponent({
       name: 'StorageCardStub',
       props: { storage: { type: Object, required: true } },
-      emits: ['close', 'done'],
+      emits: ['close', 'done', 'edit'],
       template: `
       <section :aria-label="'storage-' + storage.name">
         <span>{{ storage.name }}</span>
         <button :aria-label="'remove-' + storage.name" @click="$emit('close')">remove</button>
         <button :aria-label="'reload-' + storage.name" @click="$emit('done')">done</button>
+        <button :aria-label="'edit-' + storage.name" @click="$emit('edit', storage)">edit</button>
       </section>
     `,
     }),
@@ -101,9 +109,49 @@ const AceEditorStub = defineComponent({
   template: '<textarea :value="value" @input="$emit(\'update:value\', $event.target.value)" />',
 })
 
+// 服务实例配置端点下发的形状：宿主载荷装在 host_config 里，凭据已掩码
 const storagesFixture = [
-  { name: '本地存储', type: 'local', config: {} },
-  { name: '自定义存储 1', type: 'custom1', config: {} },
+  {
+    capability: 'storage',
+    name: '本地存储',
+    type: 'local',
+    enabled: true,
+    config: {},
+    host_config: { bare_token_target: true },
+    is_default_target: true,
+    provider: '__builtin__',
+    masked_fields: [],
+    type_available: true,
+    type_name: '本地',
+  },
+  {
+    capability: 'storage',
+    name: '自定义存储 1',
+    type: 'custom1',
+    enabled: true,
+    config: {},
+    host_config: { bare_token_target: true },
+    is_default_target: false,
+    provider: '__builtin__',
+    masked_fields: [],
+    type_available: true,
+    type_name: '自定义',
+  },
+]
+
+// 扩展声明的存储类型；内建类型不在登记表里，故此处只有一条
+const storageTypesFixture = [
+  {
+    capability: 'storage',
+    type: 'p123',
+    name: '123网盘',
+    icon: null,
+    multi_instance: false,
+    config_form_available: false,
+    config_schema: null,
+    provider: 'P123Helper',
+    distribution: 'plugin',
+  },
 ]
 
 const directoriesFixture = [
@@ -135,7 +183,8 @@ function mockLoadedSettings(options: { mountedDisk?: boolean | null } = {}) {
   mocks.apiGet.mockImplementation((endpoint: string) => {
     if (endpoint === 'system/setting/public/Directories')
       return { data: { value: structuredClone(directoriesFixture) } }
-    if (endpoint === 'system/setting/public/Storages') return { data: { value: structuredClone(storagesFixture) } }
+    if (endpoint === 'service/configs/storage') return structuredClone(storagesFixture)
+    if (endpoint === 'service/types/storage') return structuredClone(storageTypesFixture)
     if (endpoint === 'media/category') return { 电影: ['华语'] }
     if (endpoint === 'system/env') {
       return {
@@ -154,6 +203,8 @@ function mockLoadedSettings(options: { mountedDisk?: boolean | null } = {}) {
     throw new Error(`Unexpected GET ${endpoint}`)
   })
   mocks.apiPost.mockResolvedValue({ success: true })
+  mocks.apiPut.mockResolvedValue({ success: true })
+  mocks.apiDelete.mockResolvedValue({ success: true })
 }
 
 async function renderDirectorySettings() {
@@ -177,6 +228,8 @@ describe('AccountSettingDirectory', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {})
     mocks.apiGet.mockReset()
     mocks.apiPost.mockReset()
+    mocks.apiPut.mockReset()
+    mocks.apiDelete.mockReset()
     mocks.openSharedDialog.mockReset()
     mocks.toastError.mockReset()
     mocks.toastSuccess.mockReset()
@@ -241,7 +294,7 @@ describe('AccountSettingDirectory', () => {
     expect(mocks.toastError).toHaveBeenCalledWith('存在重复目录名称！无法保存，请修改！')
   })
 
-  it('removes directories and storages and persists the remaining collections', async () => {
+  it('removes a directory as a whole collection but a storage instance on its own endpoint', async () => {
     const user = userEvent.setup()
     await renderDirectorySettings()
     await screen.findByText('目录3')
@@ -252,30 +305,85 @@ describe('AccountSettingDirectory', () => {
       expect.objectContaining({ name: '目录3', priority: 0 }),
     ])
 
-    mocks.apiPost.mockClear()
+    // 存储改成逐条删除：只动这一行，同族其余配置不进请求体
     await user.click(screen.getByRole('button', { name: 'remove-自定义存储 1' }))
-    await user.click(getCard('存储').getByRole('button', { name: '保存' }))
-    expect(mocks.apiPost).toHaveBeenCalledWith('system/setting/Storages', [
-      expect.objectContaining({ name: '本地存储', type: 'local' }),
-    ])
+    await waitFor(() => {
+      expect(mocks.apiDelete).toHaveBeenCalledWith('service/configs/storage/custom1', {
+        params: { name: '自定义存储 1' },
+      })
+    })
+    expect(mocks.apiPost).not.toHaveBeenCalledWith('system/setting/Storages', expect.anything())
   })
 
-  it('filters existing storage types and creates unique custom storage names', async () => {
+  it('offers a storage type again once it is configured, because a type may hold several instances', async () => {
     const user = userEvent.setup()
     await renderDirectorySettings()
     await screen.findByText('自定义存储 1')
-    const storageCard = getCard('存储')
-    const actionButtons = storageCard.getAllByRole('button')
-    await user.click(actionButtons.at(-1)!)
+    await user.click(screen.getByRole('button', { name: '添加实例' }))
 
-    expect(screen.queryByText('本地', { selector: '.v-list-item-title' })).not.toBeInTheDocument()
-    await user.click(await screen.findByText('自定义', { selector: '.v-list-item-title' }))
+    // 已配置过的类型仍然可选：一个存储类型可以配多份实例
+    expect(await screen.findByText('本地', { selector: '.v-list-item-title' })).toBeInTheDocument()
+    await user.click(screen.getByText('自定义', { selector: '.v-list-item-title' }))
 
     await waitFor(() => {
-      expect(mocks.apiPost).toHaveBeenCalledWith(
-        'system/setting/Storages',
-        expect.arrayContaining([expect.objectContaining({ name: '自定义 3', type: 'custom3' })]),
-      )
+      expect(mocks.apiPost).toHaveBeenCalledWith('service/configs/storage', {
+        name: 'custom3',
+        type: 'custom3',
+        enabled: false,
+        config: {},
+      })
+    })
+    expect(mocks.toastSuccess).toHaveBeenCalledWith('配置已保存')
+  })
+
+  it('hides a single-instance type once it already has a configuration', async () => {
+    const user = userEvent.setup()
+    mocks.apiGet.mockImplementation((endpoint: string) => {
+      if (endpoint === 'service/types/storage') return structuredClone(storageTypesFixture)
+      if (endpoint === 'service/configs/storage')
+        return [{ ...structuredClone(storagesFixture[0]), type: 'p123', name: '123网盘' }]
+      if (endpoint === 'system/setting/public/Directories') return { data: { value: [] } }
+      if (endpoint === 'media/category') return {}
+      if (endpoint === 'system/env') return { success: true, data: {} }
+      return { data: { value: null }, success: true }
+    })
+    await renderDirectorySettings()
+    await screen.findByText('123网盘')
+    await user.click(screen.getByRole('button', { name: '添加实例' }))
+
+    // multi_instance 为 false 的类型只接受一份配置，配过之后不再给出新增入口
+    await screen.findByText('本地', { selector: '.v-list-item-title' })
+    expect(screen.queryByText('123网盘', { selector: '.v-list-item-title' })).not.toBeInTheDocument()
+  })
+
+  it('saves the instance shell through the config endpoint and the default target through its own', async () => {
+    const user = userEvent.setup()
+    await renderDirectorySettings()
+    await screen.findByText('自定义存储 1')
+
+    await user.click(screen.getByRole('button', { name: 'edit-自定义存储 1' }))
+    const [, , handlers] = mocks.openSharedDialog.mock.calls.at(-1) as [
+      unknown,
+      unknown,
+      Record<string, (payload: unknown) => Promise<void>>,
+    ]
+    await handlers.done({
+      type: 'custom1',
+      name: '改名后的存储',
+      config: {},
+      bare_token_target: false,
+      default: true,
+    })
+
+    // 实例名与裸令牌承接随配置写入，默认调用目标另走专用端点，两者互不换算
+    expect(mocks.apiPut).toHaveBeenCalledWith(
+      'service/configs/storage/custom1',
+      expect.objectContaining({ name: '改名后的存储', bare_token_target: false }),
+      { params: { name: '自定义存储 1' } },
+    )
+    expect(mocks.apiPut.mock.calls[0][1]).not.toHaveProperty('default')
+    expect(mocks.apiPut).toHaveBeenCalledWith('service/default_target/storage/custom1', undefined, {
+      params: { name: '改名后的存储' },
     })
   })
 
@@ -311,9 +419,14 @@ describe('AccountSettingDirectory', () => {
     await renderDirectorySettings()
     await screen.findByText('目录1')
 
+    mocks.apiDelete.mockRejectedValueOnce(new Error('offline'))
+    await user.click(screen.getByRole('button', { name: 'remove-自定义存储 1' }))
+    await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith('删除配置失败！'))
+
     mocks.apiPost.mockRejectedValueOnce(new Error('offline'))
-    await user.click(getCard('存储').getByRole('button', { name: '保存' }))
-    await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith('存储设置保存失败！'))
+    await user.click(screen.getByRole('button', { name: '添加实例' }))
+    await user.click(await screen.findByText('自定义', { selector: '.v-list-item-title' }))
+    await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith('新增配置失败！'))
 
     mocks.apiPost.mockRejectedValueOnce(new Error('offline'))
     await user.click(getCard('目录').getByRole('button', { name: '保存' }))
@@ -332,12 +445,10 @@ describe('AccountSettingDirectory', () => {
     await user.click(directoryCard.getByRole('button', { name: '分类策略' }))
     expect(mocks.openSharedDialog).toHaveBeenCalledOnce()
 
-    const initialStorageLoads = mocks.apiGet.mock.calls.filter(
-      ([url]) => url === 'system/setting/public/Storages',
-    ).length
+    const initialStorageLoads = mocks.apiGet.mock.calls.filter(([url]) => url === 'service/configs/storage').length
     await user.click(screen.getByRole('button', { name: 'reload-本地存储' }))
     await waitFor(() => {
-      expect(mocks.apiGet.mock.calls.filter(([url]) => url === 'system/setting/public/Storages')).toHaveLength(
+      expect(mocks.apiGet.mock.calls.filter(([url]) => url === 'service/configs/storage')).toHaveLength(
         initialStorageLoads + 1,
       )
     })

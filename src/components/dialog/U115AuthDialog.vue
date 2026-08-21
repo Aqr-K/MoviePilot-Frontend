@@ -22,6 +22,11 @@ const props = defineProps({
     type: Object as PropType<{ [key: string]: any }>,
     required: true,
   },
+  // 存储令牌，同一类型配了多份实例时用它指到具体那一份
+  storage: {
+    type: String,
+    default: 'u115',
+  },
 })
 
 // Events 定义
@@ -64,7 +69,7 @@ function handleDone() {
 // 重置配置
 async function handleReset() {
   try {
-    await manageStorage('u115', 'reset_config', {}, { feedback: 'silent' })
+    await manageStorage(props.storage, 'reset_config', {}, { feedback: 'silent' })
     setMessage('success', t('dialog.u115Auth.authSuccess'))
     handleDone()
   } catch (error) {
@@ -77,7 +82,7 @@ async function handleReset() {
 async function fetchAuthUrl() {
   try {
     const result = await manageStorage<{ authUrl: string; state: string }>(
-      'u115',
+      props.storage,
       'generate_auth_url',
       {},
       { feedback: 'silent' },
@@ -126,7 +131,7 @@ function openAuthWindow() {
 async function checkAuthStatus() {
   try {
     const result = await manageStorage<{ status: number; tip?: string }>(
-      'u115',
+      props.storage,
       'check_login',
       {},
       { feedback: 'silent' },
