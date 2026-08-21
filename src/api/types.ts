@@ -2253,3 +2253,45 @@ export interface CategoryConfig {
   movie?: { [key: string]: CategoryRule }
   tv?: { [key: string]: CategoryRule }
 }
+
+// 名称解析管道中的一环
+export interface MetaParserRing {
+  // 解析环标识，形如 AIMetaPlugin@alt#llm；内建环为 builtin
+  parser: string
+  // 声明标识，即扩展在自己命名空间内给这一环起的名字
+  parser_id: string
+  // 展示名称
+  name: string
+  // 登记方实例键，形如 AIMetaPlugin@alt；内建环为 null
+  owner?: string | null
+  // 登记方的扩展标识，即哪个插件；内建环为 null
+  extension_id?: string | null
+  // 登记方的实例标识，即哪个分身；内建环为 null
+  instance_id?: string | null
+  // 声明的默认顺序，只在用户未排到该环时决定它排在哪
+  priority: number
+  // 该环是否参与解析
+  enabled: boolean
+  // 该环在最终生效顺序中的位次，停用的环仍占住位次但不执行
+  order: number
+  // 用户是否显式排过该环，为 false 表示按声明 priority 追加在末尾
+  configured: boolean
+  // 登记方的发行方式
+  distribution: string
+  // 位次与启停是否由宿主固定，内建环恒为 true
+  pinned: boolean
+}
+
+// 名称解析管道当前的最终生效顺序
+export interface MetaParserPipeline {
+  // 按最终生效顺序排列的解析环
+  rings: MetaParserRing[]
+}
+
+// 名称解析顺序配置中的一条
+export interface MetaParserOrderEntry {
+  // 解析环标识
+  parser: string
+  // 是否参与解析
+  enabled: boolean
+}

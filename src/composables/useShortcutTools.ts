@@ -14,6 +14,7 @@ const NetTestView = defineAsyncComponent(() => import('@/views/system/NetTestVie
 const RuleTestView = defineAsyncComponent(() => import('@/views/system/RuleTestView.vue'))
 const ModuleTestView = defineAsyncComponent(() => import('@/views/system/ModuleTestView.vue'))
 const WordsView = defineAsyncComponent(() => import('@/views/system/WordsView.vue'))
+const MetaParserView = defineAsyncComponent(() => import('@/views/system/MetaParserView.vue'))
 const CacheView = defineAsyncComponent(() => import('@/views/system/CacheView.vue'))
 const AccountSettingService = defineAsyncComponent(() => import('@/views/system/ServiceView.vue'))
 const ShortcutLogDialog = defineAsyncComponent(() => import('@/components/dialog/ShortcutLogDialog.vue'))
@@ -86,6 +87,15 @@ export function useShortcutTools() {
       component: WordsView,
       maxWidth: '60rem',
       titleText: t('shortcut.words.subtitle'),
+    },
+    {
+      title: t('shortcut.metaParser.title'),
+      subtitle: t('shortcut.metaParser.subtitle'),
+      icon: 'mdi-sort-variant',
+      dialog: 'metaParser',
+      component: MetaParserView,
+      maxWidth: '60rem',
+      titleText: t('shortcut.metaParser.subtitle'),
     },
     {
       title: t('shortcut.cache.title'),

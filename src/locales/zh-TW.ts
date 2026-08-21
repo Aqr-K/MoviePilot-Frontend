@@ -850,6 +850,10 @@ export default {
       title: '詞表',
       subtitle: '詞表設置',
     },
+    metaParser: {
+      title: '解析',
+      subtitle: '名稱解析順序',
+    },
     cache: {
       title: '緩存',
       subtitle: '管理緩存',
@@ -2653,6 +2657,20 @@ export default {
       executeSuccess: '定時作業執行請求提交成功！',
       mobileWaitingAfter: '{time}之後',
       mobileNoNextRun: '暫無排程',
+    },
+    metaParser: {
+      title: '名稱解析順序',
+      subtitle: '調整各解析環的執行次序與啟停',
+      orderHint: '順序即語義：靠後的解析環可以覆蓋靠前的解析環已經識別出的欄位。拖動即時生效。',
+      pinnedTag: '固定',
+      pinnedHint: '由宿主固定執行，無法排序或停用',
+      unconfiguredTag: '預設順序',
+      ownerHost: '宿主內建',
+      distributionBuiltin: '內置',
+      distributionMarket: '插件市場',
+      toggleLabel: '啟用{name}',
+      noExtensionRing: '暫無擴充功能提供的解析環',
+      orderSaveSuccess: '解析順序已保存',
     },
     subscribe: {
       basicSettings: '基礎設置',

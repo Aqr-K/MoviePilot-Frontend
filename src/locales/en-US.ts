@@ -861,6 +861,10 @@ export default {
       title: 'Words',
       subtitle: 'Word Settings',
     },
+    metaParser: {
+      title: 'Parsing',
+      subtitle: 'Name Parser Order',
+    },
     cache: {
       title: 'Cache',
       subtitle: 'Manage Cache',
@@ -2705,6 +2709,21 @@ export default {
       executeSuccess: 'Scheduled job execution request submitted successfully!',
       mobileWaitingAfter: 'In {time}',
       mobileNoNextRun: 'No schedule',
+    },
+    metaParser: {
+      title: 'Name Parser Order',
+      subtitle: 'Adjust the execution order and on/off state of each parser stage',
+      orderHint:
+        'Order is semantics: a later stage can override fields already recognized by earlier stages. Dragging takes effect immediately.',
+      pinnedTag: 'Pinned',
+      pinnedHint: 'Executed at a fixed position by the host; cannot be reordered or disabled',
+      unconfiguredTag: 'Default order',
+      ownerHost: 'Host built-in',
+      distributionBuiltin: 'Built-in',
+      distributionMarket: 'Plugin market',
+      toggleLabel: 'Enable {name}',
+      noExtensionRing: 'No parser stages provided by extensions',
+      orderSaveSuccess: 'Parser order saved',
     },
     subscribe: {
       basicSettings: 'Basic Settings',
