@@ -413,21 +413,27 @@ watch(targetPluginId, () => {
               </VListItem>
 
               <div v-if="editingId === row.instanceId" class="plugin-instance-manage-dialog__panel">
-                <VSelect
-                  v-model="form.level"
-                  :items="levelItems"
-                  :label="t('plugin.logLevelSelectLabel')"
-                  density="compact"
-                  hide-details
-                />
-                <VTextField
-                  v-model="form.expiresAt"
-                  type="datetime-local"
-                  :label="t('plugin.logLevelExpiresLabel')"
-                  :hint="t('plugin.logLevelExpiresHint')"
-                  persistent-hint
-                  density="compact"
-                />
+                <VRow>
+                  <VCol cols="12" md="6">
+                    <VSelect
+                      v-model="form.level"
+                      :items="levelItems"
+                      :label="t('plugin.logLevelSelectLabel')"
+                      density="compact"
+                      hide-details
+                    />
+                  </VCol>
+                  <VCol cols="12" md="6">
+                    <VTextField
+                      v-model="form.expiresAt"
+                      type="datetime-local"
+                      :label="t('plugin.logLevelExpiresLabel')"
+                      :hint="t('plugin.logLevelExpiresHint')"
+                      persistent-hint
+                      density="compact"
+                    />
+                  </VCol>
+                </VRow>
                 <div class="d-flex align-center ga-2">
                   <VBtn
                     v-if="row.configuredLevel"
@@ -505,26 +511,28 @@ watch(targetPluginId, () => {
 
 .plugin-instance-manage-dialog__hint {
   display: flex;
-  gap: 0.5rem;
   align-items: center;
-  padding: 0.5rem 1rem;
-  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   background: rgba(var(--v-theme-on-surface), 0.04);
+  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   font-size: 0.8125rem;
+  gap: 0.5rem;
+  padding-block: 0.5rem;
+  padding-inline: 1rem;
 }
 
 .plugin-instance-manage-dialog__notices {
   display: grid;
   gap: 0.5rem;
-  padding: 0.75rem 1rem 0;
+  padding-block: 0.75rem 0;
+  padding-inline: 1rem;
 }
 
 .plugin-instance-manage-dialog__instance,
 .plugin-instance-manage-dialog__facts {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.375rem;
   align-items: center;
+  gap: 0.375rem;
 }
 
 .plugin-instance-manage-dialog__facts {
@@ -540,9 +548,9 @@ watch(targetPluginId, () => {
 
 .plugin-instance-manage-dialog__panel {
   display: grid;
-  gap: 0.75rem;
-  padding: 0.75rem 1rem 1rem;
-  border-block-end: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   background: rgba(var(--v-theme-on-surface), 0.02);
+  gap: 0.75rem;
+  padding-block: 0.75rem 1rem;
+  padding-inline: 1rem;
 }
 </style>
