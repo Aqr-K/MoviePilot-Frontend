@@ -4942,16 +4942,46 @@ export default {
     recentlyUsed: 'Recently Used',
     allPlugins: 'All Plugins',
     noRecentPlugins: 'None',
-    logLevelManage: 'Instance Log Level',
-    logLevelManageTitle: '{name} Instance Log Level',
-    logLevelScopeHint:
-      'Each instance keeps its own log level. The plugin host and all of its clones are listed here, and changes take effect immediately without a restart.',
-    logLevelLoadFailed: 'Failed to load instance log levels, please try again later',
-    logLevelRefreshFailed: 'The change was applied, but refreshing instance log levels failed. Please retry manually.',
+    instanceManage: 'Instance Settings',
+    instanceManageTitle: '{name} Instance Settings',
+    instanceManageHint:
+      'These settings are kept per instance. The plugin host and all registered clones are listed here, and changes take effect immediately without a restart.',
+    instanceLoadFailed: 'Failed to load the instance list, please try again later',
+    instanceRefreshFailed: 'The change was applied, but refreshing the instance list failed. Please retry manually.',
+    instanceOverlayFailed:
+      'Failed to read the installed plugin list; instance display names and the default call target are unavailable for now',
     instanceHost: 'Host',
     instanceClone: 'Clone',
     instancesEmpty: 'No instances',
-    logLevelCurrentInstance: 'Current',
+    instanceCurrent: 'Current',
+    defaultTarget: 'Default call target',
+    defaultTargetSet: 'Set as default call target',
+    defaultTargetClear: 'Clear default call target',
+    defaultTargetOnlyOneHint:
+      'Each plugin has at most one default call target at a time; setting a new one clears the previous target.',
+    defaultTargetMissingWarning:
+      'No default call target yet: until one is set, an external call that does not name an instance (a workflow action, for example) fails outright. No instance is picked at random, and the first one is not used either.',
+    defaultTargetSingleInstanceHint:
+      'This plugin has only its host and no clones, so calls without an instance go straight to the host and no default call target is needed.',
+    defaultTargetSetSuccess: 'This instance is now the default call target',
+    defaultTargetClearSuccess: 'Default call target cleared for this instance',
+    defaultTargetFailed: 'Operation failed: {message}',
+    instanceDisabled: 'Disabled',
+    instanceDisabledFacts: 'Its settings and display information are still there; enabling restores them',
+    instanceDisable: 'Disable',
+    instanceEnable: 'Enable',
+    instanceDisableConfirm: 'Confirm disable',
+    instanceDisableKeepsConfig:
+      'Disabling is not deleting: this instance keeps its settings and display information exactly as they are, and enabling it again restores them.',
+    instanceDisableClearsPlacements:
+      'Two things that only make sense for a registered instance are cleared: the default call target flag and the log level override.',
+    instanceDisableLeavesList: 'Once disabled it leaves the instance list; you can still undo that in this dialog.',
+    instanceDisableDefaultTargetWarning:
+      'It is the current default call target. After disabling it, calls that do not name an instance fail until a new default is set.',
+    instanceDisableSuccess: '{name} disabled, its settings are kept',
+    instanceDisableFailed: 'Failed to disable: {message}',
+    instanceEnableSuccess: '{name} enabled',
+    instanceEnableFailed: 'Failed to enable: {message}',
     logLevelFollowGlobal: 'Follows global',
     logLevelConfigured: 'Configured: {level}',
     logLevelEffective: 'Effective: {level}',

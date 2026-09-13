@@ -540,10 +540,10 @@ describe('PluginCard lifecycle actions', () => {
     )
   })
 
-  it('opens the instance log level dialog from the menu with the card plugin', async () => {
+  it('opens the instance management dialog from the menu with the card plugin', async () => {
     const { container } = await renderWithProviders(PluginCard, { props: { plugin } })
     await openAdvancedActions(container)
-    await fireEvent.click(await screen.findByText('实例日志等级'))
+    await fireEvent.click(await screen.findByText('实例管理'))
 
     expect(mocks.openSharedDialog).toHaveBeenCalledWith(
       expect.any(Object),

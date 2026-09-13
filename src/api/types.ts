@@ -1210,6 +1210,8 @@ export interface Plugin {
   is_instance?: boolean
   // 实例实现模式
   instance_mode?: 'virtual'
+  // 该实例是否为所属插件的默认调用目标
+  is_default_target?: boolean
 }
 
 /** 插件市场为已安装插件选择的当前更新候选。 */
@@ -1409,6 +1411,12 @@ export interface PluginInstanceLogLevelUpdateRequest {
   level: string
   // 覆盖失效时间，为空表示不过期
   expires_at?: string | null
+}
+
+/** 启用或停用一个插件实例的请求参数。 */
+export interface PluginInstanceEnabledRequest {
+  // 目标启用状态；置假即停用，配置与展示信息原样留存
+  enabled: boolean
 }
 
 // 插件侧栏全页导航项（与后端 PluginSidebarNavItem 对齐）
