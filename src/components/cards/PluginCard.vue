@@ -24,6 +24,7 @@ const PluginCloneDialog = defineAsyncComponent(() => import('../dialog/PluginClo
 const PluginLogDialog = defineAsyncComponent(() => import('../dialog/PluginLogDialog.vue'))
 const PluginMarketDetailDialog = defineAsyncComponent(() => import('../dialog/PluginMarketDetailDialog.vue'))
 const PluginVersionHistoryDialog = defineAsyncComponent(() => import('../dialog/PluginVersionHistoryDialog.vue'))
+const PluginLogLevelDialog = defineAsyncComponent(() => import('../dialog/PluginLogLevelDialog.vue'))
 
 // 输入参数
 const props = defineProps({
@@ -273,6 +274,11 @@ function showPluginCapabilities() {
 /** 显示当前插件不包含持久化原值的数据诊断摘要。 */
 function showPluginDataSummary() {
   openSharedDialog(PluginDataSummaryDialog, { plugin: props.plugin }, {}, { closeOn: ['close', 'update:modelValue'] })
+}
+
+/** 显示本插件各实例（本体与分身）各自的日志等级。 */
+function showPluginLogLevel() {
+  openSharedDialog(PluginLogLevelDialog, { plugin: props.plugin }, {}, { closeOn: ['close', 'update:modelValue'] })
 }
 
 /** 重新加载当前插件并刷新插件页相关运行事实。 */
@@ -721,6 +727,12 @@ const advancedDropdownItems = [
     value: 13,
     prependIcon: 'mdi-database-eye-outline',
     click: showPluginDataSummary,
+  },
+  {
+    title: t('plugin.logLevelManage'),
+    value: 14,
+    prependIcon: 'mdi-text-box-search-outline',
+    click: showPluginLogLevel,
   },
   {
     title: t('plugin.reload'),

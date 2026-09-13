@@ -1383,6 +1383,34 @@ export interface PluginReleaseVersionsResponse {
   items: PluginReleaseVersion[]
 }
 
+/** 单个插件实例的日志等级设置与生效结果。 */
+export interface PluginInstanceLogLevel {
+  // 实例 ID
+  instance_id: string
+  // 该实例设置的日志等级覆盖，为空表示未设置或已过期
+  configured_level?: string | null
+  // 日志等级覆盖的失效时间，为空表示不过期
+  expires_at?: string | null
+  // 按过期回落判定后实际生效的日志等级
+  effective_level: string
+}
+
+/** 插件全部实例（含本体）的日志等级设置总览。 */
+export interface PluginInstanceLogLevelOverview {
+  // 插件 ID
+  plugin_id: string
+  // 该插件全部实例的日志等级设置，首项固定是本体自身
+  instances: PluginInstanceLogLevel[]
+}
+
+/** 设置插件实例日志等级覆盖的请求参数。 */
+export interface PluginInstanceLogLevelUpdateRequest {
+  // 目标日志等级，取值为 DEBUG、INFO、WARNING、ERROR、CRITICAL
+  level: string
+  // 覆盖失效时间，为空表示不过期
+  expires_at?: string | null
+}
+
 // 插件侧栏全页导航项（与后端 PluginSidebarNavItem 对齐）
 export interface PluginSidebarNavItem {
   plugin_id: string
