@@ -1628,6 +1628,12 @@ export interface PluginSidebarNavItem {
 
 // 渲染结构
 export interface RenderProps {
+  /** 数据页唯一根节点可附带自包含的原生 Lynx 模板，Web 渲染同节点的 content。 */
+  lynx?: {
+    version: 1
+    bundle: string
+    initialData?: Record<string, unknown>
+  }
   component: string
   text?: string
   html?: string

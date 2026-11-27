@@ -151,3 +151,9 @@ AppPage 可用 `shell.registerButton(command)` 注册底部附属按钮及菜单
 - `moviepilot:agent`
 
 没有统一 SDK 的旧宿主可按需检测旧键；缺失时提示“当前宿主未提供该能力”，不要笼统要求升级到某个版本。AgentPet 保留现有 `agent/pet/api` props，订阅和事件清理行为保持不变。
+
+## Lynx 插件数据页
+
+采用 `get_page()` 的插件可以随普通页面一起交付 Lynx 模板。插件为各端提供同一份界面和当前实例的初始数据，原生 App 负责加载，Web 使用标准页面内容。构建命令、发布目录和接入示例见 [Lynx 插件数据页](../examples/plugin-lynx/README.md)。
+
+对于 Vue 联邦插件，开发者可以从同一份 `.vue` 源码构建 Web 和 Lynx 两种产物。App 按清单选择配置、数据页、仪表盘或命名导航入口，通过版本化宿主控件渲染。构建示例、支持的控件及发布目录见 [Lynx 插件数据页](../examples/plugin-lynx/README.md#vue-插件双产物)。
